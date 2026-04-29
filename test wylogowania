@@ -1,0 +1,35 @@
+from playwright.sync_api import sync_playwright, expect
+import re
+
+def test_uzytkownik_moze_sie_wylogowac():
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=500)
+        page = browser.new_page()
+
+        page.goto("https://demobank.jaktestowac.pl/logowanie_prod.html")
+
+        # 🔐 LOGOWANIE
+        page.locator("#login_id").type("domino12")
+        page.get_by_role("button", name="dalej").click()
+
+        password_input = page.locator("#login_password")
+        expect(password_input).to_be_visible()
+        password_input.type("domino20")
+
+        page.get_by_role("button", name="zaloguj się").click()
+
+        # ✅ zalogowany
+        logout_link = page.get_by_role("link", name="wyloguj")
+        expect(logout_link).to_be_visible()
+
+        # 🔓 WYLOGOWANIE
+        logout_link.click()
+
+        # ✅ poprawna asercja (regex 🔥)
+        expect(page).to_have_url(re.compile(r".*logowanie_etap_2\.html"))
+
+        # dodatkowo UI check (lepsze niż URL)
+        expect(page.locator("#login_password")).to_be_visible()
+
+        browser.close()
