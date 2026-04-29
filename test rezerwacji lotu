@@ -1,0 +1,54 @@
+from playwright.sync_api import sync_playwright, expect
+import re
+
+def test_zakup_biletu():
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=500)
+        page = browser.new_page()
+
+        page.goto("https://blazedemo.com")
+
+        page.select_option("select[name='fromPort']", "Paris")
+        page.select_option("select[name='toPort']", "London")
+
+        page.click("input[type='submit']")
+
+        expect(page).to_have_url(re.compile(r".*/reserve\.php"))
+
+        rows = page.locator("table tbody tr")
+        expect(rows).not_to_have_count(0)
+
+        rows.first.locator("input[type='submit']").click()
+
+        expect(page).to_have_url(re.compile(r".*/purchase\.php"))
+
+        page.fill('#inputName', 'Jan Kowalski')
+        page.fill('#address', 'ul. Marszałkowska 1')
+        page.fill('#city', 'Warszawa')
+        page.fill('#state', 'Mazowieckie')
+        page.fill('#zipCode', '00-001')
+        page.fill('#creditCardNumber', '4111111111111111')
+
+        page.locator('input[name="creditCardMonth"]').fill('12')
+        page.locator('input[name="creditCardYear"]').fill('2025')
+
+        page.fill('#nameOnCard', 'JAN KOWALSKI')
+
+        remember = page.locator('#rememberMe')
+        if remember.count() > 0:
+            remember.check()
+
+        page.click("input[type='submit']")
+
+        expect(page.locator("h1")).to_have_text(
+            re.compile(r"Thank you for your purchase")
+        )
+
+        confirmation_id = page.locator(
+            "table tbody tr:nth-child(1) td:nth-child(2)"
+        ).inner_text().strip()
+
+        assert re.match(r"^\d+$", confirmation_id)
+
+        browser.close()
