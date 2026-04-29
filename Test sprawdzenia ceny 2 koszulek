@@ -1,0 +1,36 @@
+from playwright.sync_api import sync_playwright
+import re
+
+PRODUCT_URL = "http://www.selenium-shop.pl/produkt/koszulka-manchester-fc-city/"
+CART_URL = "http://www.selenium-shop.pl/koszyk/"
+
+def test_czy_cena_za_2_koszulki_jest_360_zl():
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=500)  # 👈 widoczna przeglądarka + spowolnienie
+        page = browser.new_page()
+
+        page.goto(PRODUCT_URL)
+
+        page.fill("input.qty", "2")
+        page.click("button.single_add_to_cart_button")
+
+        page.wait_for_selector(".woocommerce-message", timeout=5000)
+
+        page.goto(CART_URL)
+
+        price_text = page.locator(
+            "td.product-subtotal .woocommerce-Price-amount, td.product-subtotal bdi"
+        ).text_content()
+
+        if not price_text:
+            raise Exception("Nie udało się pobrać ceny!")
+
+        clean_price = re.sub(r"[^0-9,\.]", "", price_text).replace(",", ".")
+        cart_total = float(clean_price)
+
+        print(f"Cena: {cart_total} zł")
+
+        assert cart_total == 360
+
+        browser.close()
