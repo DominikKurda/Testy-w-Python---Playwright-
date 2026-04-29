@@ -1,0 +1,32 @@
+from playwright.sync_api import sync_playwright, expect
+
+def test_uzytkownik_moze_sie_zalogowac():
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=500)  # 👈 przeglądarka + slow motion
+        page = browser.new_page()
+
+        page.goto("https://demobank.jaktestowac.pl/logowanie_prod.html")
+
+        # login
+        login_input = page.locator("#login_id")
+        login_input.click()
+        login_input.type("domino12")
+
+        next_button = page.get_by_role("button", name="dalej")
+        expect(next_button).to_be_enabled()
+
+        next_button.click()
+
+        # hasło
+        password_input = page.locator("#login_password")
+        expect(password_input).to_be_visible()
+
+        password_input.type("domino20")
+
+        page.get_by_role("button", name="zaloguj się").click()
+
+        # ✅ asercja (auto-wait)
+        expect(page.get_by_role("link", name="wyloguj")).to_be_visible()
+
+        browser.close()
