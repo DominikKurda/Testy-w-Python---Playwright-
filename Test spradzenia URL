@@ -1,0 +1,37 @@
+from playwright.sync_api import sync_playwright, expect
+
+BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+
+ADMIN_LOGIN = "dominikkurda6@gmail.com"
+ADMIN_PASSWORD = "sKvPU@vea@LskZZF"
+
+
+def test_url_dashboard():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+
+        # =====================
+        # 🔐 LOGOWANIE
+        # =====================
+        page.goto(f"{BASE_URL}/wp-login.php")
+
+        page.fill("#user_login", ADMIN_LOGIN)
+        page.fill("#user_pass", ADMIN_PASSWORD)
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        # =====================
+        # 📊 PRZEJŚCIE DO DASHBOARD
+        # =====================
+        page.goto(f"{BASE_URL}/wp-admin/admin.php?page=wpidea-dashboard")
+
+        # =====================
+        # ✅ WALIDACJA URL (DOKŁADNA)
+        # =====================
+        expect(page).to_have_url(
+            f"{BASE_URL}/wp-admin/admin.php?page=wpidea-dashboard"
+        )
+
+        browser.close()
