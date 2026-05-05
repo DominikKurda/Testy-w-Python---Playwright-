@@ -1,0 +1,77 @@
+from playwright.sync_api import sync_playwright, expect
+import re
+import random
+import string
+
+BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "sKvPU@vea@LskZZF"
+
+
+def random_string(n=6):
+    return ''.join(random.choices(string.ascii_lowercase, k=n))
+
+def random_email():
+    return f"{random_string()}@mail.com"
+
+def random_phone():
+    return f"{random.randint(500000000, 899999999)}"
+
+
+def test_dodanie_uzytkownika_email_tel():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+
+        # 🔐 LOGOWANIE
+        page.goto(f"{BASE_URL}/wp-login.php")
+        page.fill("#user_login", LOGIN)
+        page.fill("#user_pass", PASSWORD)
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        expect(page.locator("#wpadminbar")).to_be_visible()
+
+        # 👤 DODAJ USER
+        page.goto(f"{BASE_URL}/wp-admin/user-new.php")
+
+        username = f"user_{random_string()}"
+        email = random_email()
+        phone_number = random_phone()
+
+        page.fill("#user_login", username)
+        page.fill("#email", email)
+        page.fill("#first_name", "Jan")
+        page.fill("#last_name", "Testowy")
+
+        # 📱 TELEFON (jeśli pole istnieje)
+        phone = page.locator("input[type='tel'], input[name*='phone']")
+        if phone.count() > 0:
+            phone.first.fill(phone_number)
+
+        # 🔑 HASŁO
+        page.get_by_text("Generuj hasło").click()
+        page.locator("#pass1").fill("TestHaslo123!")
+
+        # 📧 WŁĄCZ POWIADOMIENIE EMAIL
+        notify = page.locator("#send_user_notification")
+        if notify.count() > 0 and not notify.is_checked():
+            notify.check()
+
+        # 🟢 DODAJ
+        with page.expect_navigation():
+            page.locator("#createusersub").click()
+
+        # =====================
+        # ✅ WALIDACJA
+        # =====================
+
+        # jesteśmy na liście użytkowników
+        expect(page).to_have_url(re.compile("users"))
+
+        # user istnieje (najważniejsze)
+        expect(page.locator("body")).to_contain_text(username)
+
+        browser.close()
