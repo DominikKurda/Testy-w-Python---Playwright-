@@ -1,0 +1,65 @@
+from playwright.sync_api import sync_playwright, expect
+import re
+import random
+
+def test_logowanie_i_dodanie_kursu():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=300)
+        page = browser.new_page()
+
+        # =====================
+        # 🔐 LOGOWANIE
+        # =====================
+        page.goto("https://ndsbnhq893.go6.publigo.onl/wp-login.php")
+
+        page.fill("#user_login", "dominikkurda6@gmail.com")
+        page.fill("#user_pass", "domino2024D")
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        expect(page).to_have_url(re.compile("wp-admin|panel|dashboard"))
+        print("✅ Logowanie OK")
+
+        # =====================
+        # 📚 PRZEJŚCIE DO KURSÓW
+        # =====================
+        page.goto("https://ndsbnhq893.go6.publigo.onl/wp-admin/admin.php?page=wp-idea-courses")
+
+        # klik "Utwórz nowy kurs"
+        add_button = page.get_by_text("Utwórz nowy kurs")
+        expect(add_button).to_be_visible()
+        add_button.click()
+
+        # =====================
+        # ✍️ FORMULARZ
+        # =====================
+
+        # NAZWA KURSU
+        name_input = page.get_by_placeholder("Podaj nazwę kursu")
+        expect(name_input).to_be_visible()
+
+        course_name = f"Test kurs {random.randint(1000,9999)}"
+        name_input.fill(course_name)
+
+        # CENA
+        price_input = page.get_by_placeholder("Podaj cenę kursu")
+        expect(price_input).to_be_visible()
+        price_input.fill("300")
+
+        # =====================
+        # 🟢 UTWÓRZ I EDYTUJ
+        # =====================
+        create_button = page.get_by_text("Utwórz i edytuj")
+        expect(create_button).to_be_visible()
+        create_button.click()
+
+        # =====================
+        # ✅ WALIDACJA
+        # =====================
+        # sprawdzamy czy jesteśmy na stronie edycji
+        expect(page).to_have_url(re.compile("post|edit|course"))
+
+        print(f"✅ Kurs utworzony poprawnie: {course_name}")
+
+        browser.close()
