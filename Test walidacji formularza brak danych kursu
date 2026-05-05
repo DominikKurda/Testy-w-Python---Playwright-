@@ -1,0 +1,35 @@
+from playwright.sync_api import sync_playwright, expect
+import re
+
+BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+
+def test_walidacja_komunikaty():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+
+        # 🔐 LOGOWANIE
+        page.goto(f"{BASE_URL}/wp-login.php")
+        page.fill("#user_login", "dominikkurda6@gmail.com")
+        page.fill("#user_pass", "domino2024D")
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        expect(page).to_have_url(re.compile("wp-admin"))
+
+        # ➕ DODAJ KURS
+        page.goto(f"{BASE_URL}/wp-admin/admin.php?page=wp-idea-courses")
+        page.get_by_text("Utwórz nowy kurs").click()
+
+        # ❌ KLIK BEZ DANYCH
+        page.get_by_text("Utwórz i edytuj").click()
+
+        # 🔥 CZEKAJ NA KOMUNIKATY
+        expect(page.get_by_text("Pole nie może pozostać puste.")).to_be_visible()
+        expect(page.get_by_text("Podana wartość nie może być pusta i mniejsza niż 0.")).to_be_visible()
+
+        # ✅ NIE PRZESZŁO DALEJ
+        assert "publigo-editor-course" not in page.url
+
+        browser.close()
