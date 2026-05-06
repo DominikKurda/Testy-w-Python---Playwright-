@@ -1,0 +1,68 @@
+# test_dodawanie_kategorii_download_playwright.py
+
+from playwright.sync_api import sync_playwright, expect
+import random
+import string
+
+
+def losowy_tekst(dlugosc=6):
+    return ''.join(random.choices(string.ascii_lowercase, k=dlugosc))
+
+
+def test_dodaj_nowa_kategorie():
+    LOGIN = "dominikkurda6@gmail.com"
+    HASLO = "domino2024D"
+    BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+        page.set_viewport_size({"width": 1920, "height": 1080})
+
+        nazwa_kategorii = "test_" + losowy_tekst()
+        slug_kategorii = "slug_" + losowy_tekst()
+
+        # 1. Logowanie
+        page.goto(f"{BASE_URL}/wp-login.php")
+
+        page.fill("#user_login", LOGIN)
+        page.fill("#user_pass", HASLO)
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        expect(page.locator("#wpadminbar")).to_be_visible()
+
+        # 2. Przejdź do kategorii produktów cyfrowych
+        page.goto(f"{BASE_URL}/wp-admin/edit-tags.php?taxonomy=download_category&post_type=download")
+
+        expect(page.locator("#tag-name")).to_be_visible()
+
+        # 3. Formularz
+        page.fill("#tag-name", nazwa_kategorii)
+        page.fill("#tag-slug", slug_kategorii)
+
+        # 4. Kategoria nadrzędna
+        parent = page.locator("#parent")
+
+        opcje = parent.locator("option").all_inner_texts()
+        print("Dostępne kategorie nadrzędne:", opcje)
+
+        if "Kursy" in [opcja.strip() for opcja in opcje]:
+            parent.select_option(label="Kursy")
+        else:
+            parent.select_option(value="-1")
+
+        page.fill("#tag-description", "operacja poprawna")
+
+        # 5. Dodaj kategorię
+        page.click("#submit")
+
+        # 6. Walidacja
+        lista = page.locator("#the-list")
+        expect(lista).to_contain_text(nazwa_kategorii)
+
+        print(f"✅ Kategoria '{nazwa_kategorii}' została dodana poprawnie!")
+
+        page.wait_for_timeout(3000)
+        browser.close()
