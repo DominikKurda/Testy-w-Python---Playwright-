@@ -1,0 +1,76 @@
+from playwright.sync_api import sync_playwright, expect
+import random
+import string
+
+
+def losowy_tekst(dlugosc=6):
+    return ''.join(random.choices(string.ascii_lowercase, k=dlugosc))
+
+
+def test_mozna_usunac_kategorie():
+    BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+    LOGIN = "dominikkurda6@gmail.com"
+    HASLO = "domino2024D"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+        page.set_viewport_size({"width": 1920, "height": 1080})
+
+        nazwa = "usun_" + losowy_tekst()
+        slug = "slug_" + losowy_tekst()
+
+        # 1. Logowanie
+        page.goto(f"{BASE_URL}/wp-login.php")
+        page.fill("#user_login", LOGIN)
+        page.fill("#user_pass", HASLO)
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        expect(page.locator("#wpadminbar")).to_be_visible()
+
+        # 2. Wejście w kategorie
+        page.goto(
+            f"{BASE_URL}/wp-admin/edit-tags.php?taxonomy=download_category&post_type=download"
+        )
+        expect(page.locator("#tag-name")).to_be_visible()
+
+        # 3. Dodanie kategorii do usunięcia
+        page.fill("#tag-name", nazwa)
+        page.fill("#tag-slug", slug)
+        page.fill("#tag-description", "kategoria do usunięcia")
+        page.click("#submit")
+
+        expect(page.locator("#the-list")).to_contain_text(nazwa)
+
+        # 4. Znajdź wiersz kategorii
+        row = page.locator("tr", has_text=nazwa).first
+        expect(row).to_be_visible()
+        row.hover()
+
+        # 5. Debug — pokaże wszystkie linki w wierszu
+        linki = row.locator("a").all_inner_texts()
+        print("Linki w wierszu:", linki)
+
+        # 6. Znajdź link usuwania elastycznie
+        delete_link = row.locator(
+            "a:has-text('Usuń'), "
+            "a:has-text('Delete'), "
+            "a[aria-label*='Usuń'], "
+            "a[aria-label*='Delete']"
+        ).first
+
+        expect(delete_link).to_be_visible()
+
+        # 7. Kliknij Usuń i zaakceptuj alert
+        page.once("dialog", lambda dialog: dialog.accept())
+        delete_link.click()
+
+        # 8. Sprawdź, że kategoria zniknęła
+        expect(page.locator("#the-list")).not_to_contain_text(nazwa)
+
+        print(f"✅ Kategoria '{nazwa}' została usunięta poprawnie.")
+
+        page.wait_for_timeout(3000)
+        browser.close()
