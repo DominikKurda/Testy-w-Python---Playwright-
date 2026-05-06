@@ -1,0 +1,62 @@
+from playwright.sync_api import sync_playwright, expect
+
+
+def test_nie_mozna_dodac_kategorii_bez_nazwy():
+    BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+    LOGIN = "dominikkurda6@gmail.com"
+    HASLO = "domino2024D"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+        page.set_viewport_size({"width": 1920, "height": 1080})
+
+        # 1. Logowanie
+        page.goto(f"{BASE_URL}/wp-login.php")
+
+        page.fill("#user_login", LOGIN)
+        page.fill("#user_pass", HASLO)
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        expect(page.locator("#wpadminbar")).to_be_visible()
+
+        # 2. Wejście w kategorie
+        page.goto(
+            f"{BASE_URL}/wp-admin/edit-tags.php?taxonomy=download_category&post_type=download"
+        )
+
+        expect(page.locator("#tag-name")).to_be_visible()
+
+        # 3. Próba dodania kategorii bez nazwy
+        page.fill("#tag-name", "")
+
+        page.fill("#tag-description", "opis testowy bez nazwy")
+
+        page.click("#submit")
+
+        # 4. Formularz nadal powinien być widoczny
+        expect(page.locator("#tag-name")).to_be_visible()
+
+        # 5. Sprawdzenie komunikatu walidacji
+        body_text = page.locator("body").inner_text().lower()
+
+        assert (
+            "nazwa" in body_text
+            or "name" in body_text
+            or "required" in body_text
+            or "wymagane" in body_text
+        ), "❌ Nie znaleziono komunikatu walidacji dla pustej nazwy kategorii."
+
+        # 6. Sprawdzenie, że błędna kategoria nie trafiła na listę
+        lista = page.locator("#the-list").inner_text().lower()
+
+        assert (
+            "opis testowy bez nazwy" not in lista
+        ), "❌ Kategoria bez nazwy została prawdopodobnie dodana do listy."
+
+        print("✅ System poprawnie blokuje dodanie kategorii bez nazwy.")
+
+        page.wait_for_timeout(3000)
+        browser.close()
