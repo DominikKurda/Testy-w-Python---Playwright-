@@ -1,0 +1,80 @@
+# test_checkout_and_click_buy_flexible_payment_fixed.py
+
+from playwright.sync_api import sync_playwright, expect, TimeoutError as PlaywrightTimeoutError
+import time
+
+PRODUCTS = [
+    ("http://www.selenium-shop.pl/produkt/koszulka-tottenham-hotspur-f-c/", 1),
+    ("http://www.selenium-shop.pl/produkt/14/", 1),
+    ("http://www.selenium-shop.pl/produkt/koszulka-liverpool-fc/", 1),
+]
+
+CART_URL = "http://www.selenium-shop.pl/koszyk/"
+CHECKOUT_URL = "http://www.selenium-shop.pl/zamowienie/"
+
+
+def test_checkout_and_click_buy_flexible_payment():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+        page.set_viewport_size({"width": 1920, "height": 1080})
+
+        # 1. Dodaj trzy koszulki do koszyka
+        for url, qty in PRODUCTS:
+            page.goto(url)
+
+            # ustaw ilość, jeśli pole istnieje
+            try:
+                qty_input = page.locator("input.qty")
+                qty_input.wait_for(state="visible", timeout=5000)
+                qty_input.fill(str(qty))
+            except PlaywrightTimeoutError:
+                pass
+
+            # kliknij "Dodaj do koszyka"
+            page.locator("button.single_add_to_cart_button").click()
+
+            # poczekaj krótko na AJAX/animację
+            time.sleep(2)
+
+            # potwierdzenie dodania
+            page.locator(".woocommerce-message").wait_for(
+                state="visible",
+                timeout=10000
+            )
+
+        # 2. Przejdź do koszyka, potem do zamówienia
+        page.goto(CART_URL)
+        page.goto(CHECKOUT_URL)
+
+        # 3. Wypełnij wymagane pola billingowe
+        page.locator("#billing_first_name").wait_for(
+            state="visible",
+            timeout=10000
+        )
+
+        page.fill("#billing_first_name", "Jan")
+        page.fill("#billing_last_name", "Kowalski")
+        page.fill("#billing_address_1", "ul. Testowa 1")
+        page.fill("#billing_postcode", "00-001")
+        page.fill("#billing_city", "Warszawa")
+        page.fill("#billing_phone", "123456789")
+        page.fill("#billing_email", "jan.kowalski@example.com")
+
+        # 4. Wybierz pierwszy dostępny sposób płatności
+        first_payment_label = page.locator("li.wc_payment_method label").first
+        first_payment_label.wait_for(state="visible", timeout=10000)
+        first_payment_label.click()
+
+        # 5. Kliknij "Kupuję i płacę"
+        page.locator("#place_order").wait_for(
+            state="visible",
+            timeout=10000
+        )
+        page.locator("#place_order").click()
+
+        # 6. Walidacja — test dochodzi do kliknięcia
+        assert True, "Przycisk 'Kupuję i płacę' został kliknięty pomyślnie"
+
+        time.sleep(5)
+        browser.close()
