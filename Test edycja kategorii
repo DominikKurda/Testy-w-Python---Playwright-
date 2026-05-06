@@ -1,0 +1,79 @@
+from playwright.sync_api import sync_playwright, expect
+import random
+import string
+
+
+def losowy_tekst(dlugosc=6):
+    return ''.join(random.choices(string.ascii_lowercase, k=dlugosc))
+
+
+def test_edycja_kategorii_download():
+    LOGIN = "dominikkurda6@gmail.com"
+    HASLO = "domino2024D"
+    BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False, slow_mo=200)
+        page = browser.new_page()
+        page.set_viewport_size({"width": 1920, "height": 1080})
+
+        nazwa = "test_" + losowy_tekst()
+        slug = "slug_" + losowy_tekst()
+
+        nowa_nazwa = nazwa + "_edit"
+        nowy_opis = "opis po edycji"
+
+        # 1. Logowanie
+        page.goto(f"{BASE_URL}/wp-login.php")
+        page.fill("#user_login", LOGIN)
+        page.fill("#user_pass", HASLO)
+
+        with page.expect_navigation():
+            page.click("#wp-submit")
+
+        expect(page.locator("#wpadminbar")).to_be_visible()
+
+        # 2. Wejście w kategorie download
+        page.goto(f"{BASE_URL}/wp-admin/edit-tags.php?taxonomy=download_category&post_type=download")
+        expect(page.locator("#tag-name")).to_be_visible()
+
+        # 3. Dodanie kategorii
+        page.fill("#tag-name", nazwa)
+        page.fill("#tag-slug", slug)
+
+        parent = page.locator("#parent")
+        opcje = parent.locator("option").all_inner_texts()
+
+        if "Kursy" in [opcja.strip() for opcja in opcje]:
+            parent.select_option(label="Kursy")
+        else:
+            parent.select_option(value="-1")
+
+        page.fill("#tag-description", "opis przed edycja")
+        page.click("#submit")
+
+        expect(page.locator("#the-list")).to_contain_text(nazwa)
+
+        # 4. Kliknięcie konkretnego linku edycji kategorii
+        page.locator("a.row-title", has_text=nazwa).first.click()
+
+        # 5. Edycja kategorii
+        expect(page.locator("#name")).to_be_visible()
+
+        page.fill("#name", nowa_nazwa)
+        page.fill("#description", nowy_opis)
+
+        # 6. Zapisz zmiany
+        page.locator(
+            "input.button-primary, button.button-primary, input[type='submit']"
+        ).first.click()
+
+        # 7. Walidacja
+        page.goto(f"{BASE_URL}/wp-admin/edit-tags.php?taxonomy=download_category&post_type=download")
+
+        expect(page.locator("#the-list")).to_contain_text(nowa_nazwa)
+
+        print(f"✅ Kategoria została edytowana: {nazwa} -> {nowa_nazwa}")
+
+        page.wait_for_timeout(3000)
+        browser.close()
