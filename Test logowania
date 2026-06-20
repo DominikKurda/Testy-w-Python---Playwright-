@@ -1,0 +1,36 @@
+from playwright.sync_api import sync_playwright, expect
+import re
+
+EMAIL = "dominikkurda9@gmail.com"
+PASSWORD = "domino2024D"
+
+def test_login():
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=500
+        )
+
+        page = browser.new_page()
+
+        page.goto("http://localhost:3000/login")
+
+        username_input = page.get_by_placeholder("Enter User Email")
+        expect(username_input).to_be_visible()
+        username_input.fill(EMAIL)
+
+        password_input = page.get_by_placeholder("Enter Password")
+        expect(password_input).to_be_visible()
+        password_input.fill(PASSWORD)
+
+        page.locator("#loginButton").click()
+
+        page.wait_for_load_state("networkidle")
+
+        print("URL:", page.url)
+
+        # sprawdzenie czy wyszliśmy z loginu
+        expect(page).not_to_have_url(re.compile(r".*/login/?$"))
+
+        browser.close()
