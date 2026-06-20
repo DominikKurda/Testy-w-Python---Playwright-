@@ -1,0 +1,66 @@
+from playwright.sync_api import sync_playwright, expect
+
+EMAIL = "dominikkurda9@gmail.com"
+PASSWORD = "domino2024D"
+
+def test_complete_quiz():
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=300
+        )
+
+        page = browser.new_page()
+
+        # Logowanie
+        page.goto("http://localhost:3000/login")
+
+        page.get_by_placeholder("Enter User Email").fill(EMAIL)
+        page.get_by_placeholder("Enter Password").fill(PASSWORD)
+
+        page.locator("#loginButton").click()
+        page.wait_for_load_state("networkidle")
+
+        # Quiz
+        page.goto("http://localhost:3000/games/quiz.html")
+
+        # Cookies
+        if page.locator("#cookies-infobar-accept").count() > 0:
+            page.locator("#cookies-infobar-accept").click()
+
+        # Start quizu jeśli przycisk istnieje
+        if page.get_by_text("Start", exact=True).count() > 0:
+            page.get_by_text("Start", exact=True).click()
+
+        page.wait_for_timeout(1000)
+
+        # 10 pytań
+        for question in range(10):
+
+            # wybierz pierwszą odpowiedź radio
+            radios = page.locator('input[type="radio"]')
+
+            if radios.count() > 0:
+                radios.first.check()
+
+            # kliknij Submit
+            submit = page.get_by_role("button", name="Submit")
+
+            if submit.count() > 0:
+                submit.click()
+
+            page.wait_for_timeout(1000)
+
+            print(f"Pytanie {question+1} zakończone")
+
+        # wynik końcowy
+        print(page.locator("body").inner_text())
+
+        page.screenshot(path="quiz_result.png")
+
+        browser.close()
+
+
+if __name__ == "__main__":
+    test_complete_quiz()
