@@ -1,0 +1,45 @@
+from playwright.sync_api import sync_playwright, expect
+
+EMAIL = "dominikkurda9@gmail.com"
+PASSWORD = "domino2024D"
+
+def test_uzytkownik_moze_sie_wylogowac_z_gad():
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=500
+        )
+
+        page = browser.new_page()
+
+        # Logowanie
+        page.goto("http://localhost:3000/login")
+
+        page.get_by_placeholder("Enter User Email").fill(EMAIL)
+        page.get_by_placeholder("Enter Password").fill(PASSWORD)
+
+        page.locator("#loginButton").click()
+
+        page.wait_for_load_state("networkidle")
+
+        # Logout
+        logout_button = page.get_by_test_id("logoutButton")
+        expect(logout_button).to_be_visible()
+
+        logout_button.click()
+
+        page.wait_for_load_state("networkidle")
+
+        # Sprawdzenie czy wróciliśmy do loginu
+        expect(
+            page.get_by_placeholder("Enter User Email")
+        ).to_be_visible()
+
+        expect(
+            page.get_by_placeholder("Enter Password")
+        ).to_be_visible()
+
+        print("✅ Wylogowanie zakończone sukcesem")
+
+        browser.close()
