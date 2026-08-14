@@ -1,0 +1,113 @@
+import re
+
+from playwright.sync_api import sync_playwright, expect
+
+
+PRODUCTS = [
+    "http://www.selenium-shop.pl/produkt/koszulka-tottenham-hotspur-f-c/",
+    "http://www.selenium-shop.pl/produkt/14/",
+    "http://www.selenium-shop.pl/produkt/koszulka-liverpool-fc/",
+]
+
+CHECKOUT_URL = "http://www.selenium-shop.pl/zamowienie/"
+
+CUSTOMER = {
+    "#billing_first_name": "Jan",
+    "#billing_last_name": "Kowalski",
+    "#billing_address_1": "ul. Testowa 1",
+    "#billing_postcode": "00-001",
+    "#billing_city": "Warszawa",
+    "#billing_phone": "123456789",
+    "#billing_email": "jan.kowalski@example.com",
+}
+
+
+def test_user_can_buy_three_products():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+
+        try:
+            page = browser.new_page(
+                viewport={"width": 1920, "height": 1080}
+            )
+
+            # 1. Dodanie produktów
+            for product_url in PRODUCTS:
+                page.goto(product_url, wait_until="domcontentloaded")
+
+                add_button = page.locator(
+                    "button.single_add_to_cart_button"
+                )
+
+                add_button.scroll_into_view_if_needed()
+                add_button.highlight()
+                add_button.hover()
+                add_button.click(delay=150)
+
+                message = page.locator(".woocommerce-message")
+
+                expect(message).to_contain_text(
+                    re.compile(r"dodano|added", re.IGNORECASE)
+                )
+
+                message.highlight()
+
+            # 2. Przejście do checkout
+            page.goto(
+                CHECKOUT_URL,
+                wait_until="domcontentloaded"
+            )
+
+            expect(
+                page.locator("#billing_first_name")
+            ).to_be_visible()
+
+            # 3. Wypełnienie formularza
+            for selector, value in CUSTOMER.items():
+                field = page.locator(selector)
+
+                field.scroll_into_view_if_needed()
+                field.highlight()
+                field.click()
+                field.press_sequentially(
+                    value,
+                    delay=30
+                )
+
+            # 4. Metoda płatności
+            payment = page.locator(
+                "li.wc_payment_method label"
+            ).first
+
+            payment.scroll_into_view_if_needed()
+            payment.highlight()
+            payment.hover()
+            payment.click()
+
+            # 5. Kupuję i płacę
+            place_order = page.locator("#place_order")
+
+            place_order.scroll_into_view_if_needed()
+            place_order.highlight()
+            place_order.hover()
+
+            expect(place_order).to_be_visible()
+            expect(place_order).to_be_enabled()
+
+            place_order.click(delay=150)
+
+            # 6. Walidacja zamówienia
+            expect(page).to_have_url(
+                re.compile(r".*/order-received/.*"),
+                timeout=10_000
+            )
+
+            confirmation = page.locator(
+                ".woocommerce-thankyou-order-received"
+            )
+
+            expect(confirmation).to_be_visible()
+            confirmation.highlight()
+
+        finally:
+            browser.close()
