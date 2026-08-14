@@ -1,54 +1,144 @@
-from playwright.sync_api import sync_playwright, expect
 import re
 
+from playwright.sync_api import Locator, sync_playwright, expect
+
+
+BASE_URL = "https://blazedemo.com"
+
+ROUTE = {
+    "from": "Paris",
+    "to": "London",
+}
+
+PASSENGER = {
+    "#inputName": "Jan Kowalski",
+    "#address": "ul. Marszałkowska 1",
+    "#city": "Warszawa",
+    "#state": "Mazowieckie",
+    "#zipCode": "00-001",
+    "#creditCardNumber": "4111111111111111",
+    'input[name="creditCardMonth"]': "12",
+    'input[name="creditCardYear"]': "2028",
+    "#nameOnCard": "JAN KOWALSKI",
+}
+
+
+def type_visible(locator: Locator, text: str) -> None:
+    locator.evaluate(
+        "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})"
+    )
+    locator.highlight()
+    locator.click()
+    locator.press_sequentially(text, delay=30)
+
+
+def click_visible(locator: Locator) -> None:
+    locator.evaluate(
+        "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})"
+    )
+    locator.highlight()
+    locator.hover()
+    locator.click(delay=150)
+
+
+def select_visible(locator: Locator, value: str) -> None:
+    locator.highlight()
+    locator.select_option(value)
+
+
 def test_zakup_biletu():
-
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=500)
-        page = browser.new_page()
+        browser = p.chromium.launch(headless=False)
 
-        page.goto("https://blazedemo.com")
+        try:
+            page = browser.new_page(
+                viewport={"width": 1920, "height": 1080}
+            )
 
-        page.select_option("select[name='fromPort']", "Paris")
-        page.select_option("select[name='toPort']", "London")
+            # 1. Otwarcie strony
+            page.goto(BASE_URL, wait_until="domcontentloaded")
 
-        page.click("input[type='submit']")
+            # 2. Wybór trasy
+            departure = page.locator("select[name='fromPort']")
+            destination = page.locator("select[name='toPort']")
 
-        expect(page).to_have_url(re.compile(r".*/reserve\.php"))
+            expect(departure).to_be_visible()
+            expect(destination).to_be_visible()
 
-        rows = page.locator("table tbody tr")
-        expect(rows).not_to_have_count(0)
+            select_visible(departure, ROUTE["from"])
+            select_visible(destination, ROUTE["to"])
 
-        rows.first.locator("input[type='submit']").click()
+            # 3. Wyszukanie lotów
+            find_flights = page.locator("input[type='submit']")
 
-        expect(page).to_have_url(re.compile(r".*/purchase\.php"))
+            click_visible(find_flights)
 
-        page.fill('#inputName', 'Jan Kowalski')
-        page.fill('#address', 'ul. Marszałkowska 1')
-        page.fill('#city', 'Warszawa')
-        page.fill('#state', 'Mazowieckie')
-        page.fill('#zipCode', '00-001')
-        page.fill('#creditCardNumber', '4111111111111111')
+            expect(page).to_have_url(
+                re.compile(r".*/reserve\.php")
+            )
 
-        page.locator('input[name="creditCardMonth"]').fill('12')
-        page.locator('input[name="creditCardYear"]').fill('2025')
+            # 4. Wybór pierwszego lotu
+            flights = page.locator("table tbody tr")
 
-        page.fill('#nameOnCard', 'JAN KOWALSKI')
+            expect(flights.first).to_be_visible()
 
-        remember = page.locator('#rememberMe')
-        if remember.count() > 0:
-            remember.check()
+            choose_flight = flights.first.locator(
+                "input[type='submit']"
+            )
 
-        page.click("input[type='submit']")
+            click_visible(choose_flight)
 
-        expect(page.locator("h1")).to_have_text(
-            re.compile(r"Thank you for your purchase")
-        )
+            expect(page).to_have_url(
+                re.compile(r".*/purchase\.php")
+            )
 
-        confirmation_id = page.locator(
-            "table tbody tr:nth-child(1) td:nth-child(2)"
-        ).inner_text().strip()
+            # 5. Wypełnienie formularza
+            for selector, value in PASSENGER.items():
+                field = page.locator(selector)
 
-        assert re.match(r"^\d+$", confirmation_id)
+                expect(field).to_be_visible()
+                type_visible(field, value)
 
-        browser.close()
+            # 6. Zapamiętanie danych
+            remember = page.locator("#rememberMe")
+
+            if remember.is_visible():
+                remember.evaluate(
+                    "el => el.scrollIntoView("
+                    "{behavior: 'smooth', block: 'center'})"
+                )
+                remember.highlight()
+                remember.check()
+
+            # 7. Zakup biletu
+            purchase_button = page.locator(
+                "input[type='submit']"
+            )
+
+            click_visible(purchase_button)
+
+            # 8. Potwierdzenie zakupu
+            confirmation = page.locator("h1")
+
+            expect(confirmation).to_have_text(
+                re.compile(
+                    r"Thank you for your purchase",
+                    re.IGNORECASE
+                )
+            )
+
+            confirmation.highlight()
+
+            # 9. Walidacja ID transakcji
+            confirmation_id = page.locator(
+                "table tbody tr:nth-child(1) td:nth-child(2)"
+            )
+
+            expect(confirmation_id).to_have_text(
+                re.compile(r"^\d+$")
+            )
+
+            confirmation_id.highlight()
+
+        finally:
+            browser.close()
