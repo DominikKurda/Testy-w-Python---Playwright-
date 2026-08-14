@@ -1,0 +1,108 @@
+import re
+
+from playwright.sync_api import Locator, sync_playwright, expect
+
+
+PRODUCT_URL = (
+    "http://www.selenium-shop.pl/"
+    "produkt/koszulka-tottenham-hotspur-f-c/"
+)
+
+CHECKOUT_URL = "http://www.selenium-shop.pl/zamowienie/"
+
+EXPECTED_ERRORS = [
+    "First name",
+    "Last name",
+    "Street address",
+    "Town / City",
+    "Phone",
+    "Email address",
+    "Postcode / ZIP",
+]
+
+
+def click_visible(locator: Locator) -> None:
+    locator.evaluate(
+        "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})"
+    )
+    locator.highlight()
+    locator.hover()
+    locator.click(delay=150)
+
+
+def test_checkout_wymagane_pola_puste():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=False)
+
+        try:
+            page = browser.new_page(
+                viewport={"width": 1920, "height": 1080}
+            )
+
+            # 1. Dodanie produktu
+            page.goto(
+                PRODUCT_URL,
+                wait_until="domcontentloaded"
+            )
+
+            add_button = page.locator(
+                "button.single_add_to_cart_button"
+            )
+
+            click_visible(add_button)
+
+            message = page.locator(".woocommerce-message")
+            expect(message).to_be_visible()
+            message.highlight()
+
+            # 2. Przejście do checkoutu
+            page.goto(
+                CHECKOUT_URL,
+                wait_until="domcontentloaded"
+            )
+
+            expect(
+                page.locator("#billing_first_name")
+            ).to_be_visible()
+
+            # 3. Formularz pozostaje pusty
+
+            # 4. Próba złożenia zamówienia
+            place_order = page.locator("#place_order")
+
+            expect(place_order).to_be_visible()
+            expect(place_order).to_be_enabled()
+
+            click_visible(place_order)
+
+            # 5. Walidacja błędów
+            errors = page.locator(".woocommerce-error")
+            error_items = errors.locator("li")
+
+            expect(errors).to_be_visible()
+            expect(error_items).to_have_count(
+                len(EXPECTED_ERRORS)
+            )
+
+            for error in EXPECTED_ERRORS:
+                expect(errors).to_contain_text(
+                    re.compile(error, re.IGNORECASE)
+                )
+
+            errors.evaluate(
+                "el => el.scrollIntoView({behavior: 'smooth', block: 'center'})"
+            )
+            errors.highlight()
+
+            # 6. Zamówienie nie zostało utworzone
+            expect(page).not_to_have_url(
+                re.compile(r".*/order-received/.*")
+            )
+
+            # 7. Użytkownik pozostaje na checkout
+            expect(page).to_have_url(
+                re.compile(r".*/zamowienie/?$")
+            )
+
+        finally:
+            browser.close()
