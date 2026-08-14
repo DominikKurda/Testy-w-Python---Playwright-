@@ -1,32 +1,80 @@
-from playwright.sync_api import sync_playwright, expect
+import os
+
+from playwright.sync_api import Locator, sync_playwright, expect
+
+
+LOGIN_URL = "https://demobank.jaktestowac.pl/logowanie_prod.html"
+
+USER = {
+    "login": os.getenv("DEMOBANK_LOGIN", "domino12"),
+    "password": os.getenv("DEMOBANK_PASSWORD", "domino20"),
+}
+
+
+def type_visible(locator: Locator, text: str) -> None:
+    locator.highlight()
+    locator.click()
+    locator.press_sequentially(text, delay=30)
+
+
+def click_visible(locator: Locator) -> None:
+    locator.highlight()
+    locator.hover()
+    locator.click(delay=150)
+
 
 def test_uzytkownik_moze_sie_zalogowac():
-
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=500)  # 👈 przeglądarka + slow motion
-        page = browser.new_page()
+        browser = p.chromium.launch(headless=False)
 
-        page.goto("https://demobank.jaktestowac.pl/logowanie_prod.html")
+        try:
+            page = browser.new_page(
+                viewport={"width": 1920, "height": 1080}
+            )
 
-        # login
-        login_input = page.locator("#login_id")
-        login_input.click()
-        login_input.type("domino12")
+            # 1. Otworzenie strony logowania
+            page.goto(LOGIN_URL, wait_until="domcontentloaded")
 
-        next_button = page.get_by_role("button", name="dalej")
-        expect(next_button).to_be_enabled()
+            # 2. Wpisanie loginu
+            login_input = page.locator("#login_id")
+            expect(login_input).to_be_visible()
 
-        next_button.click()
+            type_visible(login_input, USER["login"])
 
-        # hasło
-        password_input = page.locator("#login_password")
-        expect(password_input).to_be_visible()
+            # 3. Kliknięcie "Dalej"
+            next_button = page.get_by_role(
+                "button",
+                name="dalej"
+            )
 
-        password_input.type("domino20")
+            expect(next_button).to_be_enabled()
+            click_visible(next_button)
 
-        page.get_by_role("button", name="zaloguj się").click()
+            # 4. Wpisanie hasła
+            password_input = page.locator("#login_password")
+            expect(password_input).to_be_visible()
 
-        # ✅ asercja (auto-wait)
-        expect(page.get_by_role("link", name="wyloguj")).to_be_visible()
+            type_visible(password_input, USER["password"])
 
-        browser.close()
+            # 5. Kliknięcie "Zaloguj się"
+            login_button = page.get_by_role(
+                "button",
+                name="zaloguj się"
+            )
+
+            expect(login_button).to_be_enabled()
+            click_visible(login_button)
+
+            # 6. Walidacja poprawnego logowania
+            logout_link = page.get_by_role(
+                "link",
+                name="wyloguj"
+            )
+
+            expect(logout_link).to_be_visible()
+            expect(page).not_to_have_url(LOGIN_URL)
+
+            logout_link.highlight()
+
+        finally:
+            browser.close()
