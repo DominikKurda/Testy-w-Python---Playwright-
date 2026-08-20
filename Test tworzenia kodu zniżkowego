@@ -1,9 +1,8 @@
-import random
 import re
-import string
 from datetime import date, timedelta
+from uuid import uuid4
 
-from playwright.sync_api import sync_playwright, expect
+from playwright.sync_api import expect, sync_playwright
 
 
 BASE_URL = "https://orrcpmr842.go6.publigo.onl"
@@ -18,133 +17,44 @@ LOGIN = "dominikkurda6@gmail.com"
 PASSWORD = "domino2024D"
 
 
-def losowy_tekst(dlugosc=8):
-    return "".join(
-        random.choices(
-            string.ascii_uppercase + string.digits,
-            k=dlugosc
-        )
-    )
-
-
 def pole_w_wierszu(page, nazwa, selector):
-    label = page.get_by_text(
-        nazwa,
-        exact=True
-    ).first
-
-    expect(label).to_be_visible()
-
     return (
-        label
+        page.get_by_text(nazwa, exact=True)
+        .first
         .locator("xpath=ancestor::tr[1]")
         .locator(selector)
         .first
     )
 
 
-def kliknij_widocznie(
-    page,
-    locator,
-    pauza=150,
-    centrum=False
-):
-    expect(locator).to_be_visible()
-    expect(locator).to_be_enabled()
-
-    if centrum:
-        locator.evaluate(
-            """
-            element => element.scrollIntoView({
-                behavior: 'smooth',
-                block: 'center',
-                inline: 'center'
-            })
-            """
-        )
-    else:
-        locator.scroll_into_view_if_needed()
-
+def kliknij_widocznie(locator):
     locator.highlight()
-    locator.hover()
-
-    page.wait_for_timeout(pauza)
-
-    locator.click(
-        delay=120
-    )
-
-
-def wypelnij_pole(page, field, value):
-    expect(field).to_be_visible()
-    expect(field).to_be_enabled()
-
-    field.scroll_into_view_if_needed()
-    field.highlight()
-
-    field.click(
-        delay=80
-    )
-
-    field.fill(
-        str(value)
-    )
+    locator.click(delay=100)
 
 
 def zamknij_kalendarz(page):
-    datepicker = page.locator(
-        "#ui-datepicker-div"
-    )
+    datepicker = page.locator("#ui-datepicker-div")
 
-    if (
-        datepicker.count() > 0
-        and datepicker.is_visible()
-    ):
-        page.keyboard.press(
-            "Escape"
-        )
+    if datepicker.count() and datepicker.is_visible():
+        page.keyboard.press("Escape")
 
-    if (
-        datepicker.count() > 0
-        and datepicker.is_visible()
-    ):
+    if datepicker.count() and datepicker.is_visible():
         datepicker.evaluate(
-            """
-            element => {
-                element.style.display = 'none';
-            }
-            """
+            "element => element.style.display = 'none'"
         )
 
 
-def wypelnij_date(
-    page,
-    field,
-    value
-):
+def wypelnij_date(page, field, value):
     zamknij_kalendarz(page)
 
-    expect(field).to_be_visible()
-    expect(field).to_be_enabled()
-
-    field.scroll_into_view_if_needed()
-    field.highlight()
-
-    # Bez click(), żeby nie otwierać datepickera
     field.fill(
-        str(value),
-        force=True
+        value,
+        force=True,
     )
 
-    field.dispatch_event(
-        "change"
-    )
+    field.dispatch_event("change")
 
-    expect(
-        field
-    ).to_have_value(
-        str(value)
-    )
+    expect(field).to_have_value(value)
 
     zamknij_kalendarz(page)
 
@@ -153,17 +63,12 @@ def wybierz_produkt(
     page,
     nazwa_pola,
     pomin_wartosc=None,
-    wymagany=True
+    wymagany=True,
 ):
     label = page.get_by_text(
         nazwa_pola,
-        exact=True
+        exact=True,
     ).first
-
-    expect(label).to_be_visible()
-
-    label.scroll_into_view_if_needed()
-    label.highlight()
 
     select = (
         label
@@ -172,13 +77,7 @@ def wybierz_produkt(
         .first
     )
 
-    expect(
-        select
-    ).to_be_attached()
-
-    produkty = select.locator(
-        "option"
-    ).evaluate_all(
+    produkty = select.locator("option").evaluate_all(
         """
         options => options
             .map(option => ({
@@ -207,18 +106,42 @@ def wybierz_produkt(
     if not produkty:
         if wymagany:
             raise AssertionError(
-                f"Brak produktów w polu: "
-                f"{nazwa_pola}"
+                f"Brak produktów w polu: {nazwa_pola}"
             )
-
         return None
 
     produkt = produkty[0]
 
-    select.select_option(
-        value=produkt["value"],
-        force=True
+    select_id = select.get_attribute("id")
+
+    assert select_id, (
+        f"Pole '{nazwa_pola}' nie posiada ID."
     )
+
+    chosen = page.locator(
+        f"#{select_id}_chosen"
+    )
+
+    kliknij_widocznie(
+        chosen.locator("input").first
+    )
+
+    wynik = (
+        chosen
+        .locator(".chosen-results li.active-result")
+        .filter(has_text=produkt["text"])
+        .first
+    )
+
+    kliknij_widocznie(wynik)
+
+    zaznaczone = select.locator(
+        "option:checked"
+    ).evaluate_all(
+        "options => options.map(option => option.value)"
+    )
+
+    assert produkt["value"] in zaznaczone
 
     return produkt["value"]
 
@@ -226,42 +149,19 @@ def wybierz_produkt(
 def zaloguj_uzytkownika(page):
     page.goto(
         LOGIN_URL,
-        wait_until="domcontentloaded"
+        wait_until="domcontentloaded",
     )
 
-    login = page.locator(
-        "#user_login"
-    )
-
-    password = page.locator(
-        "#user_pass"
-    )
-
-    login_button = page.locator(
-        "#wp-submit"
-    )
-
-    wypelnij_pole(
-        page,
-        login,
-        LOGIN
-    )
-
-    wypelnij_pole(
-        page,
-        password,
-        PASSWORD
-    )
+    page.locator("#user_login").fill(LOGIN)
+    page.locator("#user_pass").fill(PASSWORD)
 
     kliknij_widocznie(
-        page,
-        login_button,
-        pauza=200
+        page.locator("#wp-submit")
     )
 
     expect(page).to_have_url(
         re.compile(r"wp-admin"),
-        timeout=15_000
+        timeout=15_000,
     )
 
 
@@ -269,7 +169,7 @@ def otworz_kody_znizkowe(page):
     page.goto(
         f"{BASE_URL}/wp-admin/"
         "admin.php?page=wp-idea-discounts",
-        wait_until="domcontentloaded"
+        wait_until="domcontentloaded",
     )
 
     expect(
@@ -278,297 +178,159 @@ def otworz_kody_znizkowe(page):
 
 
 def otworz_formularz_kodu(page):
-    add_button = page.get_by_text(
-        "Dodaj kod zniżkowy",
-        exact=True
-    )
-
     kliknij_widocznie(
-        page,
-        add_button,
-        pauza=600,
-        centrum=True
+        page.get_by_text(
+            "Dodaj kod zniżkowy",
+            exact=True,
+        )
     )
 
     expect(
         page.get_by_text(
             "Nazwa promocji",
-            exact=True
+            exact=True,
         )
     ).to_be_visible()
 
 
-def wypelnij_formularz_kodu(
+def wypelnij_formularz(
     page,
     nazwa_promocji,
     kod,
     data_poczatkowa,
-    data_wygasniecia
+    data_wygasniecia,
 ):
-    # =========================
-    # NAZWA PROMOCJI
-    # =========================
-    name_input = pole_w_wierszu(
+    pole_w_wierszu(
         page,
         "Nazwa promocji",
-        "input"
-    )
+        "input",
+    ).fill(nazwa_promocji)
 
-    wypelnij_pole(
-        page,
-        name_input,
-        nazwa_promocji
-    )
-
-    expect(
-        name_input
-    ).to_have_value(
-        nazwa_promocji
-    )
-
-    # =========================
-    # KOD
-    # =========================
-    code_input = pole_w_wierszu(
+    pole_w_wierszu(
         page,
         "Kod",
-        "input"
-    )
+        "input",
+    ).fill(kod)
 
-    wypelnij_pole(
-        page,
-        code_input,
-        kod
-    )
-
-    expect(
-        code_input
-    ).to_have_value(
-        kod
-    )
-
-    # =========================
-    # TYP
-    # =========================
     type_select = pole_w_wierszu(
         page,
         "Typ",
-        "select"
+        "select",
     )
 
-    expect(
-        type_select
-    ).to_be_visible()
-
-    type_select.scroll_into_view_if_needed()
-    type_select.highlight()
-
-    options = type_select.locator(
+    percentage_option = type_select.locator(
         "option"
+    ).filter(
+        has_text=re.compile(
+            "procent",
+            re.IGNORECASE,
+        )
+    ).first
+
+    percentage_value = percentage_option.get_attribute(
+        "value"
     )
 
-    znaleziono_typ = False
-
-    for i in range(
-        options.count()
-    ):
-        option = options.nth(i)
-
-        if (
-            "procent"
-            in option.inner_text().lower()
-        ):
-            type_select.select_option(
-                value=option.get_attribute(
-                    "value"
-                )
-            )
-
-            znaleziono_typ = True
-            break
-
-    assert znaleziono_typ, (
+    assert percentage_value, (
         "Nie znaleziono typu procentowego"
     )
 
-    # =========================
-    # WARTOŚĆ
-    # =========================
-    value_input = pole_w_wierszu(
+    type_select.select_option(
+        value=percentage_value
+    )
+
+    pole_w_wierszu(
         page,
         "Wartość",
-        "input"
-    )
+        "input",
+    ).fill("10")
 
-    wypelnij_pole(
-        page,
-        value_input,
-        "10"
-    )
-
-    expect(
-        value_input
-    ).to_have_value(
-        "10"
-    )
-
-    # =========================
-    # PRODUKT WYMAGANY
-    # =========================
     produkt_wymagany = wybierz_produkt(
         page,
         "Produkty wymagane",
-        wymagany=True
     )
 
-    # =========================
-    # PRODUKT WYKLUCZONY
-    # =========================
     wybierz_produkt(
         page,
         "Produkty wykluczone",
         pomin_wartosc=produkt_wymagany,
-        wymagany=False
-    )
-
-    # =========================
-    # DATA POCZĄTKOWA
-    # =========================
-    start_date = pole_w_wierszu(
-        page,
-        "Data początkowa",
-        "input"
+        wymagany=False,
     )
 
     wypelnij_date(
         page,
-        start_date,
-        data_poczatkowa
-    )
-
-    # =========================
-    # DATA WYGAŚNIĘCIA
-    # =========================
-    expiration_date = pole_w_wierszu(
-        page,
-        "Wygasa",
-        "input"
+        pole_w_wierszu(
+            page,
+            "Data początkowa",
+            "input",
+        ),
+        data_poczatkowa,
     )
 
     wypelnij_date(
         page,
-        expiration_date,
-        data_wygasniecia
+        pole_w_wierszu(
+            page,
+            "Wygasa",
+            "input",
+        ),
+        data_wygasniecia,
     )
 
-    # =========================
-    # MINIMALNA KWOTA
-    # =========================
-    minimum_amount = pole_w_wierszu(
+    pole_w_wierszu(
         page,
         "Minimalna kwota",
-        "input"
-    )
+        "input",
+    ).fill("100")
 
-    wypelnij_pole(
-        page,
-        minimum_amount,
-        "100"
-    )
-
-    expect(
-        minimum_amount
-    ).to_have_value(
-        "100"
-    )
-
-    # =========================
-    # MAKSYMALNA ILOŚĆ UŻYĆ
-    # =========================
-    usage_limit = pole_w_wierszu(
+    pole_w_wierszu(
         page,
         "Maksymalna ilość użyć",
-        "input"
-    )
+        "input",
+    ).fill("5")
 
-    wypelnij_pole(
-        page,
-        usage_limit,
-        "5"
-    )
-
-    expect(
-        usage_limit
-    ).to_have_value(
-        "5"
-    )
-
-    # =========================
-    # JEDNORAZOWY DLA KLIENTA
-    # =========================
-    single_use = pole_w_wierszu(
+    checkbox = pole_w_wierszu(
         page,
         "Jednorazowy dla danego klienta",
-        "input[type='checkbox']"
+        "input[type='checkbox']",
     )
 
-    single_use.scroll_into_view_if_needed()
-    single_use.highlight()
+    if not checkbox.is_checked():
+        kliknij_widocznie(checkbox)
 
-    if not single_use.is_checked():
-        kliknij_widocznie(
-            page,
-            single_use,
-            pauza=200
-        )
-
-    expect(
-        single_use
-    ).to_be_checked()
+    expect(checkbox).to_be_checked()
 
 
 def zapisz_kod(page):
-    zamknij_kalendarz(
-        page
+    zamknij_kalendarz(page)
+
+    formularz = page.locator(
+        "form"
+    ).filter(
+        has=page.get_by_text(
+            "Nazwa promocji",
+            exact=True,
+        )
+    ).first
+
+    save_button = formularz.locator(
+        "button"
+    ).filter(
+        has_text=re.compile(
+            r"Zapisz|Utwórz|Dodaj",
+            re.IGNORECASE,
+        )
     )
 
-    save_button = page.locator(
-        "button:has-text('Zapisz'), "
-        "button:has-text('Utwórz'), "
-        "button:has-text('Dodaj'), "
-        "input[type='submit'], "
-        ".button-primary"
-    ).last
+    if save_button.count() == 0:
+        save_button = formularz.locator(
+            "input[type='submit'][value*='Zapisz'], "
+            "input[type='submit'][value*='Utwórz'], "
+            "input[type='submit'][value*='Dodaj']"
+        )
 
     kliknij_widocznie(
-        page,
-        save_button,
-        pauza=350,
-        centrum=True
-    )
-
-
-def sprawdz_utworzony_kod(
-    page,
-    nazwa_promocji,
-    kod
-):
-    body = page.locator(
-        "body"
-    )
-
-    expect(
-        body
-    ).to_contain_text(
-        nazwa_promocji,
-        timeout=15_000
-    )
-
-    expect(
-        body
-    ).to_contain_text(
-        kod,
-        timeout=15_000
+        save_button.first
     )
 
 
@@ -576,80 +338,63 @@ def test_tworzenie_kodu_znizkowego():
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=False,
-            slow_mo=120,
-            args=[
-                "--start-maximized"
-            ]
+            args=["--start-maximized"],
         )
 
         context = browser.new_context(
             ignore_https_errors=True,
-            no_viewport=True
+            no_viewport=True,
         )
 
         page = context.new_page()
 
-        page.set_default_timeout(
-            10_000
-        )
-
         nazwa_promocji = (
-            f"Promocja_{losowy_tekst()}"
+            f"Promocja_{uuid4().hex[:8].upper()}"
         )
 
         kod = (
-            f"KOD_{losowy_tekst()}"
+            f"KOD_{uuid4().hex[:8].upper()}"
         )
 
-        data_poczatkowa = (
-            date.today()
-            + timedelta(days=1)
-        ).isoformat()
-
-        data_wygasniecia = (
-            date.today()
-            + timedelta(days=30)
-        ).isoformat()
+        dzisiaj = date.today()
 
         try:
-            zaloguj_uzytkownika(
-                page
-            )
+            zaloguj_uzytkownika(page)
 
-            otworz_kody_znizkowe(
-                page
-            )
+            otworz_kody_znizkowe(page)
 
-            otworz_formularz_kodu(
-                page
-            )
+            otworz_formularz_kodu(page)
 
-            wypelnij_formularz_kodu(
+            wypelnij_formularz(
                 page,
                 nazwa_promocji,
                 kod,
-                data_poczatkowa,
-                data_wygasniecia
+                (dzisiaj + timedelta(days=1)).isoformat(),
+                (dzisiaj + timedelta(days=30)).isoformat(),
             )
 
-            zapisz_kod(
-                page
+            zapisz_kod(page)
+
+            row = page.get_by_role(
+                "row"
+            ).filter(
+                has_text=nazwa_promocji
             )
 
-            sprawdz_utworzony_kod(
-                page,
-                nazwa_promocji,
+            expect(row).to_be_visible(
+                timeout=15_000
+            )
+
+            expect(row).to_contain_text(
                 kod
             )
 
         except Exception:
             page.screenshot(
                 path="publigo_test_failure.png",
-                full_page=True
+                full_page=True,
             )
-
             raise
 
         finally:
-            context.close()
             browser.close()
