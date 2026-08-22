@@ -1,0 +1,670 @@
+import re
+from datetime import date, timedelta
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "domino2024D"
+
+
+# ============================================================
+# HELPERY
+# ============================================================
+
+def pole_w_wierszu(page, nazwa, selector):
+    return (
+        page.get_by_text(nazwa, exact=True)
+        .first
+        .locator("xpath=ancestor::tr[1]")
+        .locator(selector)
+        .first
+    )
+
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+    locator.highlight()
+    locator.click(delay=100)
+
+
+def zamknij_kalendarz(page):
+    datepicker = page.locator("#ui-datepicker-div")
+
+    if datepicker.count() and datepicker.is_visible():
+        page.keyboard.press("Escape")
+
+    if datepicker.count() and datepicker.is_visible():
+        datepicker.evaluate(
+            "element => element.style.display = 'none'"
+        )
+
+
+def wypelnij_date(page, field, value):
+    zamknij_kalendarz(page)
+
+    field.fill(
+        value,
+        force=True,
+    )
+
+    field.dispatch_event("change")
+
+    expect(field).to_have_value(value)
+
+    zamknij_kalendarz(page)
+
+
+# ============================================================
+# LOGOWANIE
+# ============================================================
+
+def zaloguj_uzytkownika(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    page.locator(
+        "#user_login"
+    ).fill(LOGIN)
+
+    page.locator(
+        "#user_pass"
+    ).fill(PASSWORD)
+
+    kliknij_widocznie(
+        page.locator("#wp-submit")
+    )
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+# ============================================================
+# KURSY
+# ============================================================
+
+def otworz_kursy(page):
+    page.goto(
+        f"{BASE_URL}/wp-admin/"
+        "admin.php?page=wp-idea-courses",
+        wait_until="domcontentloaded",
+    )
+
+    expect(
+        page.get_by_text(
+            "Utwórz nowy kurs",
+            exact=True,
+        )
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+
+def utworz_kurs(
+    page,
+    nazwa_kursu,
+    cena="300",
+):
+    otworz_kursy(page)
+
+    kliknij_widocznie(
+        page.get_by_text(
+            "Utwórz nowy kurs",
+            exact=True,
+        )
+    )
+
+    button = page.get_by_text(
+        "Utwórz i edytuj",
+        exact=True,
+    )
+
+    expect(button).to_be_visible()
+
+    formularz = button.locator(
+        "xpath=ancestor::*[.//input][1]"
+    )
+
+    inputs = formularz.locator(
+        "input:visible"
+    )
+
+    pola = []
+
+    for i in range(inputs.count()):
+        field = inputs.nth(i)
+
+        typ = (
+            field.get_attribute("type")
+            or "text"
+        ).lower()
+
+        if typ not in (
+            "hidden",
+            "submit",
+            "button",
+            "checkbox",
+            "radio",
+        ):
+            pola.append(field)
+
+    assert len(pola) >= 2, (
+        "Nie znaleziono pola nazwy i ceny."
+    )
+
+    pola[0].fill(
+        nazwa_kursu
+    )
+
+    pola[1].fill(
+        cena
+    )
+
+    expect(
+        pola[0]
+    ).to_have_value(
+        nazwa_kursu
+    )
+
+    expect(
+        pola[1]
+    ).to_have_value(
+        cena
+    )
+
+    kliknij_widocznie(
+        button
+    )
+
+    expect(page).to_have_url(
+        re.compile(
+            r"publigo-editor-course.*"
+            r"edit_course_id=\d+"
+        ),
+        timeout=20_000,
+    )
+
+
+# ============================================================
+# KODY ZNIŻKOWE
+# ============================================================
+
+def otworz_kody_znizkowe(page):
+    page.goto(
+        f"{BASE_URL}/wp-admin/"
+        "admin.php?page=wp-idea-discounts",
+        wait_until="domcontentloaded",
+    )
+
+    expect(
+        page.locator("h1")
+    ).to_be_visible()
+
+
+def otworz_formularz_kodu(page):
+    kliknij_widocznie(
+        page.get_by_text(
+            "Dodaj kod zniżkowy",
+            exact=True,
+        )
+    )
+
+    expect(
+        page.get_by_text(
+            "Nazwa promocji",
+            exact=True,
+        )
+    ).to_be_visible()
+
+
+def wybierz_kurs(
+    page,
+    nazwa_kursu,
+):
+    label = page.get_by_text(
+        "Produkty wymagane",
+        exact=True,
+    ).first
+
+    select = (
+        label
+        .locator("xpath=ancestor::tr[1]")
+        .locator("select")
+        .first
+    )
+
+    opcje = select.locator(
+        "option"
+    ).evaluate_all(
+        """
+        options => options
+            .map(option => ({
+                value: option.value,
+                text: option.textContent
+                    .replace(/\\u00a0/g, ' ')
+                    .replace(/\\s+/g, ' ')
+                    .trim(),
+                disabled: option.disabled
+            }))
+            .filter(option =>
+                option.value &&
+                option.text &&
+                !option.disabled
+            )
+        """
+    )
+
+    kurs = next(
+        (
+            opcja
+            for opcja in opcje
+            if nazwa_kursu.lower()
+            in opcja["text"].lower()
+        ),
+        None,
+    )
+
+    assert kurs, (
+        f"Nie znaleziono kursu: "
+        f"{nazwa_kursu}"
+    )
+
+    select_id = select.get_attribute(
+        "id"
+    )
+
+    assert select_id, (
+        "Pole Produkty wymagane "
+        "nie posiada ID."
+    )
+
+    chosen = page.locator(
+        f"#{select_id}_chosen"
+    )
+
+    kliknij_widocznie(
+        chosen.locator("input").first
+    )
+
+    wynik = (
+        chosen
+        .locator(
+            ".chosen-results li.active-result"
+        )
+        .filter(
+            has_text=kurs["text"]
+        )
+        .first
+    )
+
+    expect(
+        wynik
+    ).to_be_visible()
+
+    kliknij_widocznie(
+        wynik
+    )
+
+    zaznaczone = select.locator(
+        "option:checked"
+    ).evaluate_all(
+        "options => options.map(option => option.value)"
+    )
+
+    assert kurs["value"] in zaznaczone
+
+
+def wypelnij_kod_limit_5(
+    page,
+    nazwa_promocji,
+    kod,
+    nazwa_kursu,
+):
+    pole_w_wierszu(
+        page,
+        "Nazwa promocji",
+        "input",
+    ).fill(
+        nazwa_promocji
+    )
+
+    pole_w_wierszu(
+        page,
+        "Kod",
+        "input",
+    ).fill(
+        kod
+    )
+
+    # ========================================================
+    # TYP PROCENTOWY
+    # ========================================================
+
+    typ = pole_w_wierszu(
+        page,
+        "Typ",
+        "select",
+    )
+
+    procent = (
+        typ
+        .locator("option")
+        .filter(
+            has_text=re.compile(
+                "procent",
+                re.IGNORECASE,
+            )
+        )
+        .first
+    )
+
+    procent_value = (
+        procent.get_attribute("value")
+    )
+
+    assert procent_value, (
+        "Nie znaleziono "
+        "rabatu procentowego."
+    )
+
+    typ.select_option(
+        value=procent_value
+    )
+
+    # ========================================================
+    # WARTOŚĆ
+    # ========================================================
+
+    wartosc = pole_w_wierszu(
+        page,
+        "Wartość",
+        "input",
+    )
+
+    wartosc.fill("10")
+
+    expect(
+        wartosc
+    ).to_have_value(
+        "10"
+    )
+
+    # ========================================================
+    # KURS
+    # ========================================================
+
+    wybierz_kurs(
+        page,
+        nazwa_kursu,
+    )
+
+    # ========================================================
+    # DATY
+    # ========================================================
+
+    dzisiaj = date.today()
+
+    wypelnij_date(
+        page,
+        pole_w_wierszu(
+            page,
+            "Data początkowa",
+            "input",
+        ),
+        (
+            dzisiaj
+            + timedelta(days=1)
+        ).isoformat(),
+    )
+
+    wypelnij_date(
+        page,
+        pole_w_wierszu(
+            page,
+            "Wygasa",
+            "input",
+        ),
+        (
+            dzisiaj
+            + timedelta(days=30)
+        ).isoformat(),
+    )
+
+    # ========================================================
+    # MINIMALNA KWOTA
+    # ========================================================
+
+    minimum = pole_w_wierszu(
+        page,
+        "Minimalna kwota",
+        "input",
+    )
+
+    minimum.fill(
+        "100"
+    )
+
+    expect(
+        minimum
+    ).to_have_value(
+        "100"
+    )
+
+    # ========================================================
+    # LIMIT
+    # ========================================================
+
+    limit = pole_w_wierszu(
+        page,
+        "Maksymalna ilość użyć",
+        "input",
+    )
+
+    limit.fill(
+        "5"
+    )
+
+    expect(
+        limit
+    ).to_have_value(
+        "5"
+    )
+
+    # ========================================================
+    # JEDNORAZOWY DLA KLIENTA
+    # ========================================================
+
+    checkbox = pole_w_wierszu(
+        page,
+        "Jednorazowy dla danego klienta",
+        "input[type='checkbox']",
+    )
+
+    if not checkbox.is_checked():
+        kliknij_widocznie(
+            checkbox
+        )
+
+    expect(
+        checkbox
+    ).to_be_checked()
+
+
+# ============================================================
+# ZAPIS
+# ============================================================
+
+def zapisz_kod(page):
+    zamknij_kalendarz(page)
+
+    formularz = (
+        page.locator("form")
+        .filter(
+            has=page.get_by_text(
+                "Nazwa promocji",
+                exact=True,
+            )
+        )
+        .first
+    )
+
+    save_button = (
+        formularz
+        .locator("button")
+        .filter(
+            has_text=re.compile(
+                r"Zapisz|Utwórz|Dodaj",
+                re.IGNORECASE,
+            )
+        )
+    )
+
+    if save_button.count() == 0:
+        save_button = formularz.locator(
+            "input[type='submit'][value*='Zapisz'], "
+            "input[type='submit'][value*='Utwórz'], "
+            "input[type='submit'][value*='Dodaj']"
+        )
+
+    if save_button.count() == 0:
+        save_button = formularz.locator(
+            "input[type='submit']"
+        )
+
+    assert save_button.count() > 0, (
+        "Nie znaleziono przycisku zapisu."
+    )
+
+    expect(
+        save_button.first
+    ).to_be_visible()
+
+    kliknij_widocznie(
+        save_button.first
+    )
+
+
+# ============================================================
+# ASERCJA
+# ============================================================
+
+def sprawdz_utworzony_kod(
+    page,
+    nazwa_promocji,
+    kod,
+):
+    row = (
+        page.get_by_role("row")
+        .filter(
+            has_text=nazwa_promocji
+        )
+        .first
+    )
+
+    expect(
+        row
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+    expect(
+        row
+    ).to_contain_text(
+        kod
+    )
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+def test_admin_moze_utworzyc_kod_znizkowy_z_limitem_5_uzyc():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=150,
+            args=[
+                "--start-maximized",
+            ],
+        )
+
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        unique = uuid4().hex[:8].upper()
+
+        nazwa_kursu = (
+            f"Kurs_LIMIT5_{unique}"
+        )
+
+        nazwa_promocji = (
+            f"Promocja_LIMIT5_{unique}"
+        )
+
+        kod = (
+            f"LIMIT5_{unique}"
+        )
+
+        try:
+            # 1. Logowanie
+            zaloguj_uzytkownika(page)
+
+            # 2. Kurs
+            utworz_kurs(
+                page,
+                nazwa_kursu,
+                cena="300",
+            )
+
+            # 3. Kody
+            otworz_kody_znizkowe(page)
+
+            # 4. Formularz
+            otworz_formularz_kodu(page)
+
+            # 5. Dane kodu
+            wypelnij_kod_limit_5(
+                page,
+                nazwa_promocji,
+                kod,
+                nazwa_kursu,
+            )
+
+            # 6. Zapis
+            zapisz_kod(page)
+
+            # 7. Asercja
+            sprawdz_utworzony_kod(
+                page,
+                nazwa_promocji,
+                kod,
+            )
+
+        except Exception:
+            page.screenshot(
+                path="kod_limit5_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            context.close()
+            browser.close()
