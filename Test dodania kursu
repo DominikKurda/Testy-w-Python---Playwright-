@@ -1,65 +1,229 @@
-from playwright.sync_api import sync_playwright, expect
 import re
-import random
+from uuid import uuid4
 
-def test_logowanie_i_dodanie_kursu():
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+COURSES_URL = (
+    f"{BASE_URL}/wp-admin/"
+    "admin.php?page=wp-idea-courses"
+)
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "domino2024D"
+
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=100)
+
+
+def zaloguj_uzytkownika(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    login_input = page.locator("#user_login")
+    password_input = page.locator("#user_pass")
+    login_button = page.locator("#wp-submit")
+
+    expect(login_input).to_be_visible()
+    expect(password_input).to_be_visible()
+    expect(login_button).to_be_visible()
+
+    login_input.fill(LOGIN)
+    password_input.fill(PASSWORD)
+
+    kliknij_widocznie(
+        login_button
+    )
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+def otworz_kursy(page):
+    page.goto(
+        COURSES_URL,
+        wait_until="domcontentloaded",
+    )
+
+    expect(
+        page.get_by_text(
+            "Utwórz nowy kurs",
+            exact=True,
+        )
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+
+def pobierz_pola_formularza_kursu(page):
+    create_button = page.get_by_text(
+        "Utwórz i edytuj",
+        exact=True,
+    )
+
+    expect(
+        create_button
+    ).to_be_visible(
+        timeout=10_000,
+    )
+
+    formularz = create_button.locator(
+        "xpath=ancestor::*[.//input][1]"
+    )
+
+    inputs = formularz.locator(
+        "input:visible"
+    )
+
+    pola = []
+
+    for i in range(inputs.count()):
+        field = inputs.nth(i)
+
+        field_type = (
+            field.get_attribute("type")
+            or "text"
+        ).lower()
+
+        if field_type not in (
+            "hidden",
+            "submit",
+            "button",
+            "checkbox",
+            "radio",
+        ):
+            pola.append(field)
+
+    assert len(pola) >= 2, (
+        "Nie znaleziono pola nazwy i ceny kursu."
+    )
+
+    return pola[0], pola[1], create_button
+
+
+def utworz_kurs(
+    page,
+    nazwa_kursu,
+    cena="300",
+):
+    otworz_kursy(page)
+
+    add_button = page.get_by_text(
+        "Utwórz nowy kurs",
+        exact=True,
+    )
+
+    kliknij_widocznie(
+        add_button
+    )
+
+    name_input, price_input, create_button = (
+        pobierz_pola_formularza_kursu(page)
+    )
+
+    # Nazwa kursu
+    name_input.fill(
+        nazwa_kursu
+    )
+
+    expect(
+        name_input
+    ).to_have_value(
+        nazwa_kursu
+    )
+
+    # Cena kursu
+    price_input.fill(
+        cena
+    )
+
+    expect(
+        price_input
+    ).to_have_value(
+        cena
+    )
+
+    # Utworzenie kursu
+    kliknij_widocznie(
+        create_button
+    )
+
+    expect(page).to_have_url(
+        re.compile(
+            r"publigo-editor-course.*"
+            r"edit_course_id=\d+"
+        ),
+        timeout=20_000,
+    )
+
+
+def test_admin_moze_utworzyc_kurs():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=300)
-        page = browser.new_page()
 
-        # =====================
-        # 🔐 LOGOWANIE
-        # =====================
-        page.goto("https://ndsbnhq893.go6.publigo.onl/wp-login.php")
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=150,
+            args=["--start-maximized"],
+        )
 
-        page.fill("#user_login", "dominikkurda6@gmail.com")
-        page.fill("#user_pass", "domino2024D")
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
 
-        with page.expect_navigation():
-            page.click("#wp-submit")
+        page = context.new_page()
 
-        expect(page).to_have_url(re.compile("wp-admin|panel|dashboard"))
-        print("✅ Logowanie OK")
+        nazwa_kursu = (
+            f"Test_kurs_{uuid4().hex[:8].upper()}"
+        )
 
-        # =====================
-        # 📚 PRZEJŚCIE DO KURSÓW
-        # =====================
-        page.goto("https://ndsbnhq893.go6.publigo.onl/wp-admin/admin.php?page=wp-idea-courses")
+        try:
+            # 1. Logowanie
+            zaloguj_uzytkownika(
+                page
+            )
 
-        # klik "Utwórz nowy kurs"
-        add_button = page.get_by_text("Utwórz nowy kurs")
-        expect(add_button).to_be_visible()
-        add_button.click()
+            # 2. Utworzenie kursu
+            utworz_kurs(
+                page,
+                nazwa_kursu,
+                cena="300",
+            )
 
-        # =====================
-        # ✍️ FORMULARZ
-        # =====================
+            # 3. Walidacja końcowa
+            expect(page).to_have_url(
+                re.compile(
+                    r"publigo-editor-course.*"
+                    r"edit_course_id=\d+"
+                )
+            )
 
-        # NAZWA KURSU
-        name_input = page.get_by_placeholder("Podaj nazwę kursu")
-        expect(name_input).to_be_visible()
+        except Exception:
+            page.screenshot(
+                path="tworzenie_kursu_failure.png",
+                full_page=True,
+            )
+            raise
 
-        course_name = f"Test kurs {random.randint(1000,9999)}"
-        name_input.fill(course_name)
-
-        # CENA
-        price_input = page.get_by_placeholder("Podaj cenę kursu")
-        expect(price_input).to_be_visible()
-        price_input.fill("300")
-
-        # =====================
-        # 🟢 UTWÓRZ I EDYTUJ
-        # =====================
-        create_button = page.get_by_text("Utwórz i edytuj")
-        expect(create_button).to_be_visible()
-        create_button.click()
-
-        # =====================
-        # ✅ WALIDACJA
-        # =====================
-        # sprawdzamy czy jesteśmy na stronie edycji
-        expect(page).to_have_url(re.compile("post|edit|course"))
-
-        print(f"✅ Kurs utworzony poprawnie: {course_name}")
-
-        browser.close()
+        finally:
+            context.close()
+            browser.close()
