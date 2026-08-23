@@ -1,0 +1,197 @@
+import re
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+DIGITAL_PRODUCTS_URL = (
+    f"{BASE_URL}/wp-admin/"
+    "admin.php?page=publigo-digital-products"
+)
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "domino2024D"
+
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=100)
+
+
+def zaloguj_uzytkownika(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    page.locator("#user_login").fill(LOGIN)
+    page.locator("#user_pass").fill(PASSWORD)
+
+    kliknij_widocznie(
+        page.locator("#wp-submit")
+    )
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+def otworz_formularz_produktu(page):
+    page.goto(
+        DIGITAL_PRODUCTS_URL,
+        wait_until="domcontentloaded",
+    )
+
+    add_button = page.get_by_text(
+        "Utwórz nowy produkt cyfrowy",
+        exact=True,
+    )
+
+    expect(add_button).to_be_visible(
+        timeout=15_000,
+    )
+
+    kliknij_widocznie(add_button)
+
+
+def pobierz_pola_formularza(page):
+    create_button = page.get_by_text(
+        "Utwórz i edytuj",
+        exact=True,
+    )
+
+    expect(create_button).to_be_visible(
+        timeout=10_000,
+    )
+
+    formularz = create_button.locator(
+        "xpath=ancestor::*[.//input][1]"
+    )
+
+    inputs = formularz.locator(
+        "input:visible"
+    )
+
+    pola = []
+
+    for i in range(inputs.count()):
+        field = inputs.nth(i)
+
+        field_type = (
+            field.get_attribute("type")
+            or "text"
+        ).lower()
+
+        if field_type not in (
+            "hidden",
+            "submit",
+            "button",
+            "checkbox",
+            "radio",
+        ):
+            pola.append(field)
+
+    assert len(pola) >= 2, (
+        "Nie znaleziono pola nazwy i ceny produktu."
+    )
+
+    return (
+        pola[0],
+        pola[1],
+        create_button,
+    )
+
+
+def test_nie_mozna_utworzyc_produktu_cyfrowego_bez_ceny():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=150,
+            args=["--start-maximized"],
+        )
+
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        nazwa_produktu = (
+            f"Produkt_bez_ceny_"
+            f"{uuid4().hex[:8].upper()}"
+        )
+
+        try:
+            # 1. Logowanie
+            zaloguj_uzytkownika(page)
+
+            # 2. Produkty cyfrowe
+            otworz_formularz_produktu(page)
+
+            # 3. Pobranie pól
+            (
+                name_input,
+                price_input,
+                create_button,
+            ) = pobierz_pola_formularza(page)
+
+            # 4. Wpisanie nazwy
+            name_input.fill(
+                nazwa_produktu
+            )
+
+            expect(
+                name_input
+            ).to_have_value(
+                nazwa_produktu
+            )
+
+            # 5. Cena pozostaje pusta
+            expect(
+                price_input
+            ).to_have_value("")
+
+            # 6. Próba utworzenia produktu
+            kliknij_widocznie(
+                create_button
+            )
+
+            # 7. Produkt NIE powinien zostać utworzony
+            expect(page).not_to_have_url(
+                re.compile(
+                    r"edit.*product.*id=\d+",
+                    re.IGNORECASE,
+                ),
+                timeout=5_000,
+            )
+
+            # Formularz powinien nadal być widoczny
+            expect(
+                create_button
+            ).to_be_visible()
+
+        except Exception:
+            page.screenshot(
+                path="produkt_bez_ceny_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            context.close()
+            browser.close()
