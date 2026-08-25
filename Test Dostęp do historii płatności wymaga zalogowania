@@ -1,0 +1,139 @@
+import re
+
+from playwright.sync_api import (
+    TimeoutError as PlaywrightTimeoutError,
+    expect,
+    sync_playwright,
+)
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+ORDERS_URL = (
+    f"{BASE_URL}/wp-admin/"
+    "admin.php?page=wp-idea-payment-history"
+)
+
+
+def test_dostep_do_historii_platnosci_wymaga_zalogowania():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=200,
+            args=["--start-maximized"],
+        )
+
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        try:
+            # ====================================================
+            # 1. UŻYTKOWNIK NIE JEST ZALOGOWANY
+            # ====================================================
+
+            # Nowy context nie posiada zapisanej sesji logowania.
+
+            # ====================================================
+            # 2. PRÓBA WEJŚCIA DO HISTORII PŁATNOŚCI
+            # ====================================================
+
+            page.goto(
+                ORDERS_URL,
+                wait_until="domcontentloaded",
+            )
+
+            # ====================================================
+            # 3. SPRAWDZENIE EWENTUALNEGO KOMUNIKATU
+            # ====================================================
+
+            komunikat = page.locator(
+                "[role='alert'], "
+                "#login_error, "
+                ".notice, "
+                ".error, "
+                ".message"
+            ).filter(
+                has_text=re.compile(
+                    r"log|"
+                    r"zalog|"
+                    r"dostęp|"
+                    r"uprawnien|"
+                    r"permission|"
+                    r"access",
+                    re.IGNORECASE,
+                )
+            ).first
+
+            try:
+                komunikat.wait_for(
+                    state="visible",
+                    timeout=4000,
+                )
+
+                print(
+                    "Komunikat systemu:",
+                    komunikat.inner_text().strip(),
+                )
+
+            except PlaywrightTimeoutError:
+                print(
+                    "System nie wyświetlił komunikatu "
+                    "i zastosował bezpośrednie przekierowanie."
+                )
+
+            # ====================================================
+            # 4. SYSTEM MUSI PRZEKIEROWAĆ DO LOGOWANIA
+            # ====================================================
+
+            expect(page).to_have_url(
+                re.compile(r"wp-login\.php"),
+                timeout=15_000,
+            )
+
+            # ====================================================
+            # 5. STRONA LOGOWANIA JEST DOSTĘPNA
+            # ====================================================
+
+            expect(
+                page.locator("#user_login")
+            ).to_be_visible()
+
+            expect(
+                page.locator("#user_pass")
+            ).to_be_visible()
+
+            expect(
+                page.locator("#wp-submit")
+            ).to_be_visible()
+
+            # ====================================================
+            # 6. HISTORIA PŁATNOŚCI JEST ZABLOKOWANA
+            # ====================================================
+
+            expect(
+                page.get_by_text(
+                    "Dodaj zamówienie",
+                    exact=True,
+                )
+            ).not_to_be_visible()
+
+            expect(page).not_to_have_url(
+                re.compile(
+                    r"page=wp-idea-payment-history$"
+                )
+            )
+
+        except Exception:
+            page.screenshot(
+                path="dostep_historia_platnosci_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            context.close()
