@@ -1,0 +1,485 @@
+import re
+from datetime import date, timedelta
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+ORDERS_URL = (
+    f"{BASE_URL}/wp-admin/"
+    "admin.php?page=wp-idea-payment-history"
+)
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "domino2024D"
+
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=100)
+
+
+def pole_w_wierszu(page, nazwa, selector):
+    return (
+        page.get_by_text(nazwa, exact=True)
+        .first
+        .locator("xpath=ancestor::tr[1]")
+        .locator(selector)
+        .first
+    )
+
+
+def zamknij_kalendarz(page):
+    kalendarz = page.locator("#ui-datepicker-div")
+
+    if kalendarz.count() and kalendarz.is_visible():
+        page.keyboard.press("Escape")
+
+    if kalendarz.count() and kalendarz.is_visible():
+        kalendarz.evaluate(
+            "element => element.style.display = 'none'"
+        )
+
+
+def zaloguj_uzytkownika(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    page.locator("#user_login").fill(LOGIN)
+    page.locator("#user_pass").fill(PASSWORD)
+
+    kliknij_widocznie(
+        page.locator("#wp-submit")
+    )
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+def otworz_formularz_zamowienia(page):
+    page.goto(
+        ORDERS_URL,
+        wait_until="domcontentloaded",
+    )
+
+    add_button = page.get_by_text(
+        "Dodaj zamówienie",
+        exact=True,
+    )
+
+    expect(
+        add_button
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+    kliknij_widocznie(add_button)
+
+    expect(page).to_have_url(
+        re.compile(r"publigo-manual-order"),
+        timeout=15_000,
+    )
+
+
+def wybierz_produkt(
+    page,
+    pomin_wartosc=None,
+):
+    selects = page.locator("select")
+
+    product_select = None
+
+    for i in range(selects.count()):
+        select = selects.nth(i)
+
+        opcje = select.locator(
+            "option"
+        ).all_inner_texts()
+
+        if any(
+            tekst.strip().lower() == "wybierz produkt"
+            for tekst in opcje
+        ):
+            product_select = select
+            break
+
+    assert product_select is not None, (
+        "Nie znaleziono listy produktów."
+    )
+
+    produkty = product_select.locator(
+        "option"
+    ).evaluate_all(
+        """
+        options => options
+            .map(option => ({
+                value: option.value,
+                text: option.textContent
+                    .replace(/\\u00a0/g, ' ')
+                    .replace(/\\s+/g, ' ')
+                    .trim(),
+                disabled: option.disabled
+            }))
+            .filter(option =>
+                option.value &&
+                option.text &&
+                !option.disabled &&
+                option.text.toLowerCase() !== 'wybierz produkt'
+            )
+        """
+    )
+
+    if pomin_wartosc:
+        produkty = [
+            produkt
+            for produkt in produkty
+            if produkt["value"] != pomin_wartosc
+        ]
+
+    assert produkty, (
+        "Brak drugiego dostępnego produktu."
+    )
+
+    produkt = produkty[0]
+
+    product_select.select_option(
+        value=produkt["value"]
+    )
+
+    expect(
+        product_select
+    ).to_have_value(
+        produkt["value"]
+    )
+
+    print(
+        f"Wybrany produkt: "
+        f"{produkt['text']}"
+    )
+
+    return produkt
+
+
+def wypelnij_formularz_zamowienia(
+    page,
+    email,
+    imie,
+    nazwisko,
+    kwota,
+    data_zamowienia,
+):
+    email_input = pole_w_wierszu(
+        page,
+        "ID lub e-mail kupującego",
+        "input",
+    )
+
+    email_input.fill(email)
+
+    expect(
+        email_input
+    ).to_have_value(email)
+
+    imie_input = pole_w_wierszu(
+        page,
+        "Imię kupującego",
+        "input",
+    )
+
+    imie_input.fill(imie)
+
+    expect(
+        imie_input
+    ).to_have_value(imie)
+
+    nazwisko_input = pole_w_wierszu(
+        page,
+        "Nazwisko kupującego",
+        "input",
+    )
+
+    nazwisko_input.fill(nazwisko)
+
+    expect(
+        nazwisko_input
+    ).to_have_value(nazwisko)
+
+    kwota_input = pole_w_wierszu(
+        page,
+        "Kwota",
+        "input",
+    )
+
+    kwota_input.fill(kwota)
+
+    expect(
+        kwota_input
+    ).to_have_value(kwota)
+
+    data_input = pole_w_wierszu(
+        page,
+        "Data",
+        "input",
+    )
+
+    zamknij_kalendarz(page)
+
+    data_input.fill(
+        data_zamowienia,
+        force=True,
+    )
+
+    data_input.dispatch_event(
+        "change"
+    )
+
+    expect(
+        data_input
+    ).to_have_value(
+        data_zamowienia
+    )
+
+    zamknij_kalendarz(page)
+
+
+def utworz_zamowienie(
+    page,
+    email,
+    imie,
+    nazwisko,
+    kwota,
+    data_zamowienia,
+    pomin_produkt=None,
+):
+    otworz_formularz_zamowienia(page)
+
+    produkt = wybierz_produkt(
+        page,
+        pomin_wartosc=pomin_produkt,
+    )
+
+    wypelnij_formularz_zamowienia(
+        page,
+        email=email,
+        imie=imie,
+        nazwisko=nazwisko,
+        kwota=kwota,
+        data_zamowienia=data_zamowienia,
+    )
+
+    button = page.get_by_text(
+        "Utwórz zamówienie",
+        exact=True,
+    )
+
+    expect(
+        button
+    ).to_be_visible()
+
+    kliknij_widocznie(button)
+
+    return produkt
+
+
+def sprawdz_zamowienie_w_historii(
+    page,
+    email,
+):
+    page.goto(
+        ORDERS_URL,
+        wait_until="domcontentloaded",
+    )
+
+    row = (
+        page.get_by_role("row")
+        .filter(
+            has_text=email
+        )
+        .first
+    )
+
+    expect(
+        row
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+    return row
+
+
+def test_uzytkownik_moze_utworzyc_dwa_rozne_zamowienia():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=150,
+            args=["--start-maximized"],
+        )
+
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        unique = uuid4().hex[:8].lower()
+
+        klient_1 = {
+            "email": f"jan.{unique}@example.com",
+            "imie": "Jan",
+            "nazwisko": "Kowalski",
+            "kwota": "300",
+            "data": date.today().isoformat(),
+        }
+
+        klient_2 = {
+            "email": f"anna.{unique}@example.com",
+            "imie": "Anna",
+            "nazwisko": "Nowak",
+            "kwota": "450",
+            "data": (
+                date.today()
+                - timedelta(days=1)
+            ).isoformat(),
+        }
+
+        try:
+            # =================================================
+            # 1. LOGOWANIE
+            # =================================================
+
+            zaloguj_uzytkownika(page)
+
+            # =================================================
+            # 2. PIERWSZE ZAMÓWIENIE
+            # =================================================
+
+            produkt_1 = utworz_zamowienie(
+                page,
+                email=klient_1["email"],
+                imie=klient_1["imie"],
+                nazwisko=klient_1["nazwisko"],
+                kwota=klient_1["kwota"],
+                data_zamowienia=klient_1["data"],
+            )
+
+            # =================================================
+            # 3. DRUGIE ZAMÓWIENIE
+            # =================================================
+
+            produkt_2 = utworz_zamowienie(
+                page,
+                email=klient_2["email"],
+                imie=klient_2["imie"],
+                nazwisko=klient_2["nazwisko"],
+                kwota=klient_2["kwota"],
+                data_zamowienia=klient_2["data"],
+                pomin_produkt=produkt_1["value"],
+            )
+
+            # Produkty muszą być różne
+            assert (
+                produkt_1["value"]
+                != produkt_2["value"]
+            ), "Wybrano ten sam produkt."
+
+            # =================================================
+            # 4. PIERWSZE ZAMÓWIENIE W HISTORII
+            # =================================================
+
+            row_1 = sprawdz_zamowienie_w_historii(
+                page,
+                klient_1["email"],
+            )
+
+            expect(
+                row_1
+            ).to_contain_text(
+                klient_1["email"]
+            )
+
+            # =================================================
+            # 5. DRUGIE ZAMÓWIENIE W HISTORII
+            # =================================================
+
+            row_2 = sprawdz_zamowienie_w_historii(
+                page,
+                klient_2["email"],
+            )
+
+            expect(
+                row_2
+            ).to_contain_text(
+                klient_2["email"]
+            )
+
+            print(
+                "\nZamówienie 1:"
+            )
+            print(
+                f"Klient: "
+                f"{klient_1['imie']} "
+                f"{klient_1['nazwisko']}"
+            )
+            print(
+                f"E-mail: {klient_1['email']}"
+            )
+            print(
+                f"Produkt: {produkt_1['text']}"
+            )
+            print(
+                f"Kwota: {klient_1['kwota']} zł"
+            )
+            print(
+                f"Data: {klient_1['data']}"
+            )
+
+            print(
+                "\nZamówienie 2:"
+            )
+            print(
+                f"Klient: "
+                f"{klient_2['imie']} "
+                f"{klient_2['nazwisko']}"
+            )
+            print(
+                f"E-mail: {klient_2['email']}"
+            )
+            print(
+                f"Produkt: {produkt_2['text']}"
+            )
+            print(
+                f"Kwota: {klient_2['kwota']} zł"
+            )
+            print(
+                f"Data: {klient_2['data']}"
+            )
+
+        except Exception:
+            page.screenshot(
+                path="dwa_rozne_zamowienia_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            context.close()
+            browser.close()
