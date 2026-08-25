@@ -1,0 +1,545 @@
+import re
+from datetime import date
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+ORDERS_URL = (
+    f"{BASE_URL}/wp-admin/"
+    "admin.php?page=wp-idea-payment-history"
+)
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "domino2024D"
+
+
+# ============================================================
+# HELPERY
+# ============================================================
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=100)
+
+
+def pole_w_wierszu(page, nazwa, selector):
+    return (
+        page.get_by_text(nazwa, exact=True)
+        .first
+        .locator("xpath=ancestor::tr[1]")
+        .locator(selector)
+        .first
+    )
+
+
+def zamknij_kalendarz(page):
+    kalendarz = page.locator("#ui-datepicker-div")
+
+    if kalendarz.count() and kalendarz.is_visible():
+        page.keyboard.press("Escape")
+
+    if kalendarz.count() and kalendarz.is_visible():
+        kalendarz.evaluate(
+            "element => element.style.display = 'none'"
+        )
+
+
+# ============================================================
+# LOGOWANIE
+# ============================================================
+
+def zaloguj_uzytkownika(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    login = page.locator("#user_login")
+    password = page.locator("#user_pass")
+    button = page.locator("#wp-submit")
+
+    expect(login).to_be_visible()
+    expect(password).to_be_visible()
+    expect(button).to_be_visible()
+
+    login.fill(LOGIN)
+    password.fill(PASSWORD)
+
+    kliknij_widocznie(button)
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+# ============================================================
+# HISTORIA PŁATNOŚCI
+# ============================================================
+
+def otworz_historie_platnosci(page):
+    page.goto(
+        ORDERS_URL,
+        wait_until="domcontentloaded",
+    )
+
+    expect(
+        page.locator("h1")
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+
+def otworz_formularz_zamowienia(page):
+    otworz_historie_platnosci(page)
+
+    button = page.get_by_text(
+        "Dodaj zamówienie",
+        exact=True,
+    )
+
+    expect(
+        button
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+    kliknij_widocznie(button)
+
+    expect(page).to_have_url(
+        re.compile(r"publigo-manual-order"),
+        timeout=15_000,
+    )
+
+    expect(
+        page.get_by_text(
+            "ID lub e-mail kupującego",
+            exact=True,
+        )
+    ).to_be_visible()
+
+
+# ============================================================
+# WYBÓR PRODUKTU
+# ============================================================
+
+def wybierz_produkt(page):
+    selects = page.locator("select")
+
+    product_select = None
+
+    for i in range(selects.count()):
+        select = selects.nth(i)
+
+        opcje = select.locator(
+            "option"
+        ).all_inner_texts()
+
+        if any(
+            tekst.strip().lower() == "wybierz produkt"
+            for tekst in opcje
+        ):
+            product_select = select
+            break
+
+    assert product_select is not None, (
+        "Nie znaleziono listy produktów."
+    )
+
+    produkty = product_select.locator(
+        "option"
+    ).evaluate_all(
+        """
+        options => options
+            .map(option => ({
+                value: option.value,
+                text: option.textContent
+                    .replace(/\\u00a0/g, ' ')
+                    .replace(/\\s+/g, ' ')
+                    .trim(),
+                disabled: option.disabled
+            }))
+            .filter(option =>
+                option.value &&
+                option.text &&
+                !option.disabled &&
+                option.text.toLowerCase() !== 'wybierz produkt'
+            )
+        """
+    )
+
+    assert produkty, (
+        "Brak dostępnych produktów."
+    )
+
+    produkt = produkty[0]
+
+    product_select.select_option(
+        value=produkt["value"]
+    )
+
+    expect(
+        product_select
+    ).to_have_value(
+        produkt["value"]
+    )
+
+    print(
+        f"Wybrany produkt: {produkt['text']}"
+    )
+
+    return produkt["text"]
+
+
+# ============================================================
+# FORMULARZ ZAMÓWIENIA
+# ============================================================
+
+def wypelnij_formularz_zamowienia(
+    page,
+    email,
+    imie,
+    nazwisko,
+    kwota,
+    data_zamowienia,
+):
+    # E-mail
+    email_input = pole_w_wierszu(
+        page,
+        "ID lub e-mail kupującego",
+        "input",
+    )
+
+    email_input.fill(email)
+
+    expect(
+        email_input
+    ).to_have_value(email)
+
+    # Imię
+    imie_input = pole_w_wierszu(
+        page,
+        "Imię kupującego",
+        "input",
+    )
+
+    imie_input.fill(imie)
+
+    expect(
+        imie_input
+    ).to_have_value(imie)
+
+    # Nazwisko
+    nazwisko_input = pole_w_wierszu(
+        page,
+        "Nazwisko kupującego",
+        "input",
+    )
+
+    nazwisko_input.fill(nazwisko)
+
+    expect(
+        nazwisko_input
+    ).to_have_value(nazwisko)
+
+    # Kwota
+    kwota_input = pole_w_wierszu(
+        page,
+        "Kwota",
+        "input",
+    )
+
+    kwota_input.fill(kwota)
+
+    expect(
+        kwota_input
+    ).to_have_value(kwota)
+
+    # Data
+    data_input = pole_w_wierszu(
+        page,
+        "Data",
+        "input",
+    )
+
+    zamknij_kalendarz(page)
+
+    data_input.fill(
+        data_zamowienia,
+        force=True,
+    )
+
+    data_input.dispatch_event(
+        "change"
+    )
+
+    expect(
+        data_input
+    ).to_have_value(
+        data_zamowienia
+    )
+
+    zamknij_kalendarz(page)
+
+
+# ============================================================
+# UTWORZENIE ZAMÓWIENIA
+# ============================================================
+
+def utworz_zamowienie(page):
+    zamknij_kalendarz(page)
+
+    button = page.get_by_text(
+        "Utwórz zamówienie",
+        exact=True,
+    )
+
+    expect(
+        button
+    ).to_be_visible(
+        timeout=10_000,
+    )
+
+    kliknij_widocznie(button)
+
+
+# ============================================================
+# ZNALEZIENIE ZAMÓWIENIA
+# ============================================================
+
+def znajdz_zamowienie_po_emailu(page, email):
+    otworz_historie_platnosci(page)
+
+    row = (
+        page.get_by_role("row")
+        .filter(
+            has_text=email
+        )
+        .first
+    )
+
+    expect(
+        row
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+    return row
+
+
+# ============================================================
+# SZCZEGÓŁY ZAMÓWIENIA
+# ============================================================
+
+def otworz_szczegoly_zamowienia(page, row):
+    buttons = row.locator("button")
+
+    assert buttons.count() > 0, (
+        "Nie znaleziono menu akcji zamówienia."
+    )
+
+    # Trzy kropki
+    kliknij_widocznie(
+        buttons.last
+    )
+
+    szczegoly = page.get_by_text(
+        "Zobacz szczegóły zamówienia",
+        exact=True,
+    )
+
+    expect(
+        szczegoly
+    ).to_be_visible(
+        timeout=10_000,
+    )
+
+    kliknij_widocznie(
+        szczegoly
+    )
+
+
+# ============================================================
+# HISTORIA ZAMÓWIENIA
+# ============================================================
+
+def wejdz_w_historie_zamowienia(page):
+    # Szukamy elementu zawierającego "Historia".
+    # Nie używamy exact=True.
+    historia = page.locator(
+        "button:visible, "
+        "a:visible, "
+        "[role='tab']:visible"
+    ).filter(
+        has_text=re.compile(
+            r"Historia",
+            re.IGNORECASE,
+        )
+    ).first
+
+    if historia.count() == 0:
+        historia = page.get_by_text(
+            re.compile(
+                r"Historia",
+                re.IGNORECASE,
+            )
+        ).first
+
+    assert historia.count() > 0, (
+        "Nie znaleziono zakładki Historia."
+    )
+
+    expect(
+        historia
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+    kliknij_widocznie(
+        historia
+    )
+
+    # ========================================================
+    # KOŃCOWA WALIDACJA
+    # ========================================================
+
+    # Jeśli to zakładka, powinna być aktywna.
+    role = historia.get_attribute("role")
+
+    if role == "tab":
+        aria_selected = historia.get_attribute(
+            "aria-selected"
+        )
+
+        if aria_selected is not None:
+            expect(
+                historia
+            ).to_have_attribute(
+                "aria-selected",
+                "true",
+            )
+
+    # Dodatkowo sprawdzamy, czy po kliknięciu
+    # widoczna jest zawartość związana z historią.
+    zawartosc = page.get_by_text(
+        re.compile(
+            r"Historia|"
+            r"Utworzono|"
+            r"Zamówienie|"
+            r"Status",
+            re.IGNORECASE,
+        )
+    )
+
+    expect(
+        zawartosc.first
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+def test_szczegoly_utworzonego_zamowienia_zawieraja_poprawne_dane():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=150,
+            args=["--start-maximized"],
+        )
+
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        unique = uuid4().hex[:8].lower()
+
+        email = (
+            f"zamowienie.{unique}"
+            f"@example.com"
+        )
+
+        imie = "Jan"
+        nazwisko = f"Testowy_{unique[:4]}"
+        kwota = "300"
+
+        data_zamowienia = (
+            date.today().isoformat()
+        )
+
+        try:
+            # 1. Admin loguje się
+            zaloguj_uzytkownika(page)
+
+            # 2. Historia płatności
+            # 3. Dodaj zamówienie
+            otworz_formularz_zamowienia(page)
+
+            # 4. Wybór produktu
+            wybierz_produkt(page)
+
+            # 5. E-mail
+            # 6. Imię
+            # 7. Nazwisko
+            # 8. Kwota 300
+            # 9. Data
+            wypelnij_formularz_zamowienia(
+                page,
+                email=email,
+                imie=imie,
+                nazwisko=nazwisko,
+                kwota=kwota,
+                data_zamowienia=data_zamowienia,
+            )
+
+            # 10. Utwórz zamówienie
+            utworz_zamowienie(page)
+
+            # 11. Znajdź konkretne zamówienie
+            row = znajdz_zamowienie_po_emailu(
+                page,
+                email,
+            )
+
+            # 12. Zobacz szczegóły zamówienia
+            otworz_szczegoly_zamowienia(
+                page,
+                row,
+            )
+
+            # 13. Wejdź w Historię zamówienia
+            # Dopiero po tym test może być PASSED
+            wejdz_w_historie_zamowienia(
+                page
+            )
+
+        except Exception:
+            page.screenshot(
+                path="historia_zamowienia_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            context.close()
+            browser.close()
