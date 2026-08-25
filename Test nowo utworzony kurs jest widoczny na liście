@@ -1,0 +1,226 @@
+import re
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+COURSES_URL = (
+    f"{BASE_URL}/wp-admin/"
+    "admin.php?page=wp-idea-courses"
+)
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "domino2024D"
+
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=100)
+
+
+def zaloguj_uzytkownika(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    login_input = page.locator("#user_login")
+    password_input = page.locator("#user_pass")
+    login_button = page.locator("#wp-submit")
+
+    expect(login_input).to_be_visible()
+    expect(password_input).to_be_visible()
+
+    login_input.fill(LOGIN)
+    password_input.fill(PASSWORD)
+
+    kliknij_widocznie(
+        login_button
+    )
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+def otworz_kursy(page):
+    page.goto(
+        COURSES_URL,
+        wait_until="domcontentloaded",
+    )
+
+    expect(
+        page.get_by_text(
+            "Utwórz nowy kurs",
+            exact=True,
+        )
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+
+def utworz_kurs(
+    page,
+    nazwa_kursu,
+    cena="300",
+):
+    otworz_kursy(page)
+
+    kliknij_widocznie(
+        page.get_by_text(
+            "Utwórz nowy kurs",
+            exact=True,
+        )
+    )
+
+    create_button = page.get_by_text(
+        "Utwórz i edytuj",
+        exact=True,
+    )
+
+    expect(
+        create_button
+    ).to_be_visible()
+
+    formularz = create_button.locator(
+        "xpath=ancestor::*[.//input][1]"
+    )
+
+    inputs = formularz.locator(
+        "input:visible"
+    )
+
+    pola = []
+
+    for i in range(inputs.count()):
+        field = inputs.nth(i)
+
+        field_type = (
+            field.get_attribute("type")
+            or "text"
+        ).lower()
+
+        if field_type not in (
+            "hidden",
+            "submit",
+            "button",
+            "checkbox",
+            "radio",
+        ):
+            pola.append(field)
+
+    assert len(pola) >= 2, (
+        "Nie znaleziono pola nazwy i ceny kursu."
+    )
+
+    name_input = pola[0]
+    price_input = pola[1]
+
+    name_input.fill(
+        nazwa_kursu
+    )
+
+    price_input.fill(
+        cena
+    )
+
+    expect(
+        name_input
+    ).to_have_value(
+        nazwa_kursu
+    )
+
+    expect(
+        price_input
+    ).to_have_value(
+        cena
+    )
+
+    kliknij_widocznie(
+        create_button
+    )
+
+    expect(page).to_have_url(
+        re.compile(
+            r"publigo-editor-course.*"
+            r"edit_course_id=\d+"
+        ),
+        timeout=20_000,
+    )
+
+
+def test_nowo_utworzony_kurs_jest_widoczny_na_liscie():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=150,
+            args=["--start-maximized"],
+        )
+
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        nazwa_kursu = (
+            f"Kurs_LISTA_"
+            f"{uuid4().hex[:8].upper()}"
+        )
+
+        try:
+            # 1. Logowanie
+            zaloguj_uzytkownika(
+                page
+            )
+
+            # 2. Utworzenie kursu
+            utworz_kurs(
+                page,
+                nazwa_kursu,
+                cena="300",
+            )
+
+            # 3. Powrót do listy kursów
+            otworz_kursy(
+                page
+            )
+
+            # 4. Sprawdzenie utworzonego kursu
+            kurs = page.get_by_text(
+                nazwa_kursu,
+                exact=True,
+            ).first
+
+            expect(
+                kurs
+            ).to_be_visible(
+                timeout=15_000,
+            )
+
+        except Exception:
+            page.screenshot(
+                path="kurs_lista_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            context.close()
+            browser.close()
