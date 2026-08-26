@@ -1,0 +1,378 @@
+import re
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+USER_NEW_URL = f"{BASE_URL}/wp-admin/user-new.php"
+
+LOGIN = "dominikkurda6@gmail.com"
+PASSWORD = "domino2024D"
+
+
+# ============================================================
+# HELPERY
+# ============================================================
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=100)
+
+
+def pole_w_wierszu(page, nazwa, selector):
+    return (
+        page.get_by_text(nazwa, exact=True)
+        .first
+        .locator("xpath=ancestor::tr[1]")
+        .locator(selector)
+        .first
+    )
+
+
+# ============================================================
+# LOGOWANIE ADMINISTRATORA
+# ============================================================
+
+def zaloguj_administratora(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    login = page.locator("#user_login")
+    password = page.locator("#user_pass")
+    button = page.locator("#wp-submit")
+
+    expect(login).to_be_visible(timeout=15_000)
+    expect(password).to_be_visible(timeout=15_000)
+    expect(button).to_be_visible(timeout=15_000)
+
+    login.fill(LOGIN)
+    password.fill(PASSWORD)
+
+    kliknij_widocznie(button)
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+# ============================================================
+# FORMULARZ NOWEGO UŻYTKOWNIKA
+# ============================================================
+
+def otworz_formularz_nowego_uzytkownika(page):
+    page.goto(
+        USER_NEW_URL,
+        wait_until="domcontentloaded",
+    )
+
+    expect(
+        page.locator("#user_login")
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+
+# ============================================================
+# HASŁO NOWEGO UŻYTKOWNIKA
+# ============================================================
+
+def ustaw_haslo(page, haslo):
+    generuj_haslo = page.get_by_text(
+        re.compile(r"Generuj hasło")
+    ).first
+
+    if (
+        generuj_haslo.count()
+        and generuj_haslo.is_visible()
+    ):
+        kliknij_widocznie(generuj_haslo)
+
+    haslo_input = page.locator(
+        "#pass1, input[name='pass1']"
+    ).first
+
+    expect(
+        haslo_input
+    ).to_be_visible(
+        timeout=10_000,
+    )
+
+    haslo_input.fill(haslo)
+
+    expect(
+        haslo_input
+    ).to_have_value(haslo)
+
+
+# ============================================================
+# UTWORZENIE NOWEGO UŻYTKOWNIKA
+# ============================================================
+
+def utworz_nowego_uzytkownika(
+    page,
+    username,
+    email,
+    imie,
+    nazwisko,
+    telefon,
+    haslo,
+):
+    otworz_formularz_nowego_uzytkownika(page)
+
+    username_input = page.locator("#user_login")
+    email_input = page.locator("#email")
+    imie_input = page.locator("#first_name")
+    nazwisko_input = page.locator("#last_name")
+
+    # Nazwa użytkownika
+    username_input.fill(username)
+
+    expect(
+        username_input
+    ).to_have_value(username)
+
+    # E-mail
+    email_input.fill(email)
+
+    expect(
+        email_input
+    ).to_have_value(email)
+
+    # Imię
+    imie_input.fill(imie)
+
+    expect(
+        imie_input
+    ).to_have_value(imie)
+
+    # Nazwisko
+    nazwisko_input.fill(nazwisko)
+
+    expect(
+        nazwisko_input
+    ).to_have_value(nazwisko)
+
+    # Hasło
+    ustaw_haslo(
+        page,
+        haslo,
+    )
+
+    # Nie wysyłamy powiadomienia e-mail
+    powiadomienie = page.locator(
+        "#send_user_notification"
+    )
+
+    if (
+        powiadomienie.count()
+        and powiadomienie.is_checked()
+    ):
+        powiadomienie.uncheck()
+
+    # Numer telefonu
+    telefon_input = pole_w_wierszu(
+        page,
+        "Numer telefonu",
+        "input",
+    )
+
+    telefon_input.fill(telefon)
+
+    expect(
+        telefon_input
+    ).to_have_value(telefon)
+
+    # Dodaj użytkownika
+    button = page.locator("#createusersub")
+
+    if button.count() == 0:
+        button = page.get_by_role(
+            "button",
+            name="Dodaj użytkownika",
+        )
+
+    expect(
+        button
+    ).to_be_visible(
+        timeout=10_000,
+    )
+
+    kliknij_widocznie(button)
+
+    page.wait_for_load_state(
+        "domcontentloaded"
+    )
+
+
+# ============================================================
+# LOGOWANIE NOWEGO UŻYTKOWNIKA
+# ============================================================
+
+def zaloguj_nowego_uzytkownika(
+    page,
+    username,
+    haslo,
+):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    login = page.locator("#user_login")
+    password = page.locator("#user_pass")
+    button = page.locator("#wp-submit")
+
+    expect(login).to_be_visible(timeout=15_000)
+    expect(password).to_be_visible(timeout=15_000)
+    expect(button).to_be_visible(timeout=15_000)
+
+    # Login nowego użytkownika
+    login.fill(username)
+
+    expect(
+        login
+    ).to_have_value(username)
+
+    # Hasło nowego użytkownika
+    password.fill(haslo)
+
+    # ========================================================
+    # OSTATNI KROK TESTU
+    # ========================================================
+
+    kliknij_widocznie(button)
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+def test_nowo_utworzony_uzytkownik_moze_zalogowac_sie_do_systemu():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=200,
+            args=["--start-maximized"],
+        )
+
+        unique = uuid4().hex[:8].lower()
+
+        username = f"login_test_{unique}"
+        email = f"login.{unique}@example.com"
+
+        imie = "Jan"
+        nazwisko = "Kowalski"
+        telefon = "500600700"
+
+        haslo = "Test@Publigo2026!Aa"
+
+        admin_context = None
+        user_context = None
+
+        try:
+            # ====================================================
+            # 1. ADMINISTRATOR LOGUJE SIĘ
+            # ====================================================
+
+            admin_context = browser.new_context(
+                ignore_https_errors=True,
+                no_viewport=True,
+            )
+
+            admin_page = admin_context.new_page()
+
+            zaloguj_administratora(
+                admin_page
+            )
+
+            # ====================================================
+            # 2. ADMINISTRATOR TWORZY NOWEGO UŻYTKOWNIKA
+            # ====================================================
+
+            utworz_nowego_uzytkownika(
+                admin_page,
+                username=username,
+                email=email,
+                imie=imie,
+                nazwisko=nazwisko,
+                telefon=telefon,
+                haslo=haslo,
+            )
+
+            # ====================================================
+            # 3. ZAMKNIĘCIE SESJI ADMINISTRATORA
+            # ====================================================
+
+            admin_context.close()
+            admin_context = None
+
+            # ====================================================
+            # 4. NOWA CZYSTA SESJA
+            # ====================================================
+
+            user_context = browser.new_context(
+                ignore_https_errors=True,
+                no_viewport=True,
+            )
+
+            user_page = user_context.new_page()
+
+            # ====================================================
+            # 5. NOWY UŻYTKOWNIK:
+            #    LOGIN
+            #    HASŁO
+            #    ZALOGUJ SIĘ
+            # ====================================================
+
+            zaloguj_nowego_uzytkownika(
+                user_page,
+                username=username,
+                haslo=haslo,
+            )
+
+            # ====================================================
+            # KONIEC TESTU
+            # ====================================================
+
+        except Exception:
+
+            if user_context and user_context.pages:
+                user_context.pages[0].screenshot(
+                    path="logowanie_nowego_uzytkownika_failure.png",
+                    full_page=True,
+                )
+
+            elif admin_context and admin_context.pages:
+                admin_context.pages[0].screenshot(
+                    path="tworzenie_uzytkownika_failure.png",
+                    full_page=True,
+                )
+
+            raise
+
+        finally:
+
+            if user_context:
+                user_context.close()
+
+            if admin_context:
+                admin_context.close()
+
+            browser.close()
