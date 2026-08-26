@@ -1,77 +1,370 @@
-from playwright.sync_api import sync_playwright, expect
 import re
-import random
-import string
+from uuid import uuid4
 
-BASE_URL = "https://ndsbnhq893.go6.publigo.onl"
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://orrcpmr842.go6.publigo.onl"
+
+LOGIN_URL = (
+    f"{BASE_URL}/wp-login.php"
+    "?redirect_to=https%3A%2F%2Forrcpmr842.go6.publigo.onl%2Fwp-admin%2F"
+    "&reauth=1"
+)
+
+USER_NEW_URL = f"{BASE_URL}/wp-admin/user-new.php"
+USERS_URL = f"{BASE_URL}/wp-admin/users.php"
 
 LOGIN = "dominikkurda6@gmail.com"
-PASSWORD = "sKvPU@vea@LskZZF"
+PASSWORD = "domino2024D"
 
 
-def random_string(n=6):
-    return ''.join(random.choices(string.ascii_lowercase, k=n))
+# ============================================================
+# HELPERY
+# ============================================================
 
-def random_email():
-    return f"{random_string()}@mail.com"
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
 
-def random_phone():
-    return f"{random.randint(500000000, 899999999)}"
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=100)
 
 
-def test_dodanie_uzytkownika_email_tel():
+def pole_w_wierszu(page, nazwa, selector):
+    return (
+        page.get_by_text(nazwa, exact=True)
+        .first
+        .locator("xpath=ancestor::tr[1]")
+        .locator(selector)
+        .first
+    )
+
+
+# ============================================================
+# LOGOWANIE
+# ============================================================
+
+def zaloguj_uzytkownika(page):
+    page.goto(
+        LOGIN_URL,
+        wait_until="domcontentloaded",
+    )
+
+    login = page.locator("#user_login")
+    password = page.locator("#user_pass")
+    button = page.locator("#wp-submit")
+
+    expect(login).to_be_visible(timeout=15_000)
+    expect(password).to_be_visible(timeout=15_000)
+    expect(button).to_be_visible(timeout=15_000)
+
+    login.fill(LOGIN)
+    password.fill(PASSWORD)
+
+    kliknij_widocznie(button)
+
+    expect(page).to_have_url(
+        re.compile(r"wp-admin"),
+        timeout=15_000,
+    )
+
+
+# ============================================================
+# FORMULARZ NOWEGO UŻYTKOWNIKA
+# ============================================================
+
+def otworz_formularz_nowego_uzytkownika(page):
+    page.goto(
+        USER_NEW_URL,
+        wait_until="domcontentloaded",
+    )
+
+    expect(page).to_have_url(
+        re.compile(r"user-new\.php"),
+        timeout=15_000,
+    )
+
+    expect(
+        page.locator("#user_login")
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+
+# ============================================================
+# HASŁO
+# ============================================================
+
+def ustaw_haslo(page, haslo):
+    generuj_haslo = page.get_by_text(
+        re.compile(r"Generuj hasło")
+    ).first
+
+    if (
+        generuj_haslo.count()
+        and generuj_haslo.is_visible()
+    ):
+        kliknij_widocznie(
+            generuj_haslo
+        )
+
+    haslo_input = page.locator(
+        "#pass1, input[name='pass1']"
+    ).first
+
+    expect(
+        haslo_input
+    ).to_be_visible(
+        timeout=10_000,
+    )
+
+    haslo_input.fill(haslo)
+
+    expect(
+        haslo_input
+    ).to_have_value(haslo)
+
+
+# ============================================================
+# WYPEŁNIENIE FORMULARZA
+# ============================================================
+
+def wypelnij_formularz_uzytkownika(
+    page,
+    username,
+    email,
+    imie,
+    nazwisko,
+    witryna,
+    telefon,
+    haslo,
+):
+    # Nazwa użytkownika
+    username_input = page.locator("#user_login")
+
+    username_input.fill(username)
+
+    expect(
+        username_input
+    ).to_have_value(username)
+
+    # Adres email
+    email_input = page.locator("#email")
+
+    email_input.fill(email)
+
+    expect(
+        email_input
+    ).to_have_value(email)
+
+    # Imię
+    imie_input = page.locator("#first_name")
+
+    imie_input.fill(imie)
+
+    expect(
+        imie_input
+    ).to_have_value(imie)
+
+    # Nazwisko
+    nazwisko_input = page.locator("#last_name")
+
+    nazwisko_input.fill(nazwisko)
+
+    expect(
+        nazwisko_input
+    ).to_have_value(nazwisko)
+
+    # Witryna internetowa
+    witryna_input = page.locator("#url")
+
+    witryna_input.fill(witryna)
+
+    expect(
+        witryna_input
+    ).to_have_value(witryna)
+
+    # Język
+    jezyk = page.locator("#locale")
+
+    if jezyk.count():
+        jezyk.select_option(
+            label="Domyślne w witrynie"
+        )
+
+    # Hasło
+    ustaw_haslo(
+        page,
+        haslo,
+    )
+
+    # Wyślij powiadomienie użytkownikowi
+    powiadomienie = page.locator(
+        "#send_user_notification"
+    )
+
+    if (
+        powiadomienie.count()
+        and powiadomienie.is_checked()
+    ):
+        powiadomienie.uncheck()
+
+    # Numer telefonu
+    telefon_input = pole_w_wierszu(
+        page,
+        "Numer telefonu",
+        "input",
+    )
+
+    expect(
+        telefon_input
+    ).to_be_visible()
+
+    telefon_input.fill(telefon)
+
+    expect(
+        telefon_input
+    ).to_have_value(telefon)
+
+
+# ============================================================
+# DODANIE UŻYTKOWNIKA
+# ============================================================
+
+def dodaj_uzytkownika(page):
+    button = page.locator(
+        "#createusersub"
+    )
+
+    if button.count() == 0:
+        button = page.get_by_role(
+            "button",
+            name="Dodaj użytkownika",
+        )
+
+    expect(
+        button
+    ).to_be_visible(
+        timeout=10_000,
+    )
+
+    kliknij_widocznie(button)
+
+    page.wait_for_load_state(
+        "domcontentloaded"
+    )
+
+
+# ============================================================
+# SPRAWDZENIE NA LIŚCIE
+# ============================================================
+
+def sprawdz_uzytkownika_na_liscie(
+    page,
+    username,
+    email,
+):
+    page.goto(
+        USERS_URL,
+        wait_until="domcontentloaded",
+    )
+
+    row = (
+        page.get_by_role("row")
+        .filter(has_text=email)
+        .first
+    )
+
+    expect(
+        row
+    ).to_be_visible(
+        timeout=15_000,
+    )
+
+    expect(
+        row
+    ).to_contain_text(username)
+
+    expect(
+        row
+    ).to_contain_text(email)
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+def test_uzytkownik_moze_utworzyc_nowego_uzytkownika():
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, slow_mo=200)
-        page = browser.new_page()
 
-        # 🔐 LOGOWANIE
-        page.goto(f"{BASE_URL}/wp-login.php")
-        page.fill("#user_login", LOGIN)
-        page.fill("#user_pass", PASSWORD)
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=200,
+            args=["--start-maximized"],
+        )
 
-        with page.expect_navigation():
-            page.click("#wp-submit")
+        context = browser.new_context(
+            ignore_https_errors=True,
+            no_viewport=True,
+        )
 
-        expect(page.locator("#wpadminbar")).to_be_visible()
+        page = context.new_page()
 
-        # 👤 DODAJ USER
-        page.goto(f"{BASE_URL}/wp-admin/user-new.php")
+        unique = uuid4().hex[:8].lower()
 
-        username = f"user_{random_string()}"
-        email = random_email()
-        phone_number = random_phone()
+        username = f"jan_test_{unique}"
+        email = f"jan.{unique}@example.com"
 
-        page.fill("#user_login", username)
-        page.fill("#email", email)
-        page.fill("#first_name", "Jan")
-        page.fill("#last_name", "Testowy")
+        imie = "Jan"
+        nazwisko = "Kowalski"
+        witryna = "https://example.com"
+        telefon = "500600700"
 
-        # 📱 TELEFON (jeśli pole istnieje)
-        phone = page.locator("input[type='tel'], input[name*='phone']")
-        if phone.count() > 0:
-            phone.first.fill(phone_number)
+        haslo = "Test@Publigo2026!Aa"
 
-        # 🔑 HASŁO
-        page.get_by_text("Generuj hasło").click()
-        page.locator("#pass1").fill("TestHaslo123!")
+        try:
+            # 1. Logowanie
+            zaloguj_uzytkownika(page)
 
-        # 📧 WŁĄCZ POWIADOMIENIE EMAIL
-        notify = page.locator("#send_user_notification")
-        if notify.count() > 0 and not notify.is_checked():
-            notify.check()
+            # 2. Dodaj użytkownika
+            otworz_formularz_nowego_uzytkownika(
+                page
+            )
 
-        # 🟢 DODAJ
-        with page.expect_navigation():
-            page.locator("#createusersub").click()
+            # 3. Wypełnienie danych
+            wypelnij_formularz_uzytkownika(
+                page,
+                username=username,
+                email=email,
+                imie=imie,
+                nazwisko=nazwisko,
+                witryna=witryna,
+                telefon=telefon,
+                haslo=haslo,
+            )
 
-        # =====================
-        # ✅ WALIDACJA
-        # =====================
+            # 4. Klik „Dodaj użytkownika”
+            dodaj_uzytkownika(
+                page
+            )
 
-        # jesteśmy na liście użytkowników
-        expect(page).to_have_url(re.compile("users"))
+            # 5. Sprawdzenie, czy użytkownik istnieje
+            sprawdz_uzytkownika_na_liscie(
+                page,
+                username=username,
+                email=email,
+            )
 
-        # user istnieje (najważniejsze)
-        expect(page.locator("body")).to_contain_text(username)
+        except Exception:
+            page.screenshot(
+                path="tworzenie_uzytkownika_failure.png",
+                full_page=True,
+            )
+            raise
 
-        browser.close()
+        finally:
+            context.close()
+            browser.close()
