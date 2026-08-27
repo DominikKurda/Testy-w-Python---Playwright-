@@ -1,0 +1,251 @@
+import re
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://blazedemo.com"
+
+ROUTE = {
+    "from": "Paris",
+    "to": "London",
+}
+
+
+# ============================================================
+# HELPERY
+# ============================================================
+
+def kliknij_widocznie(locator):
+    locator.scroll_into_view_if_needed()
+
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=150)
+
+
+def pokaz_wynik(page):
+    page.wait_for_timeout(3000)
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+def test_uzytkownik_moze_wybrac_najtanszy_dostepny_lot():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=200,
+        )
+
+        page = browser.new_page(
+            viewport={
+                "width": 1920,
+                "height": 1080,
+            }
+        )
+
+        try:
+            # ====================================================
+            # 1. OTWARCIE STRONY
+            # ====================================================
+
+            page.goto(
+                BASE_URL,
+                wait_until="domcontentloaded",
+            )
+
+            departure = page.locator(
+                "select[name='fromPort']"
+            )
+
+            destination = page.locator(
+                "select[name='toPort']"
+            )
+
+            expect(departure).to_be_visible()
+            expect(destination).to_be_visible()
+
+            # ====================================================
+            # 2. WYBÓR TRASY
+            # ====================================================
+
+            departure.highlight()
+
+            departure.select_option(
+                ROUTE["from"]
+            )
+
+            destination.highlight()
+
+            destination.select_option(
+                ROUTE["to"]
+            )
+
+            expect(
+                departure
+            ).to_have_value(
+                ROUTE["from"]
+            )
+
+            expect(
+                destination
+            ).to_have_value(
+                ROUTE["to"]
+            )
+
+            # ====================================================
+            # 3. WYSZUKANIE LOTÓW
+            # ====================================================
+
+            find_flights = page.locator(
+                "input[type='submit']"
+            )
+
+            kliknij_widocznie(
+                find_flights
+            )
+
+            expect(page).to_have_url(
+                re.compile(r".*/reserve\.php"),
+                timeout=10_000,
+            )
+
+            # ====================================================
+            # 4. SPRAWDZENIE TRASY
+            # ====================================================
+
+            heading = page.locator("h3")
+
+            expect(
+                heading
+            ).to_contain_text(
+                ROUTE["from"]
+            )
+
+            expect(
+                heading
+            ).to_contain_text(
+                ROUTE["to"]
+            )
+
+            # ====================================================
+            # 5. LISTA LOTÓW
+            # ====================================================
+
+            flights = page.locator(
+                "table tbody tr"
+            )
+
+            expect(
+                flights.first
+            ).to_be_visible()
+
+            assert flights.count() > 0, (
+                "Brak dostępnych lotów."
+            )
+
+            # ====================================================
+            # 6. ODCZYT CEN
+            # ====================================================
+
+            ceny = []
+
+            for i in range(flights.count()):
+                row = flights.nth(i)
+
+                cena_text = (
+                    row.locator("td")
+                    .nth(5)
+                    .inner_text()
+                    .strip()
+                )
+
+                cena = float(
+                    re.sub(
+                        r"[^\d.]",
+                        "",
+                        cena_text,
+                    )
+                )
+
+                ceny.append(cena)
+
+            # ====================================================
+            # 7. NAJNIŻSZA CENA
+            # ====================================================
+
+            najnizsza_cena = min(ceny)
+
+            indeks_najtanszego = ceny.index(
+                najnizsza_cena
+            )
+
+            najtanszy_lot = flights.nth(
+                indeks_najtanszego
+            )
+
+            cena_najtanszego = (
+                najtanszy_lot
+                .locator("td")
+                .nth(5)
+            )
+
+            expect(
+                cena_najtanszego
+            ).to_contain_text(
+                f"{najnizsza_cena:.2f}"
+            )
+
+            # ====================================================
+            # 8. POKAZANIE NAJTAŃSZEGO LOTU
+            # ====================================================
+
+            najtanszy_lot.scroll_into_view_if_needed()
+            najtanszy_lot.highlight()
+
+            pokaz_wynik(page)
+
+            # ====================================================
+            # 9. WYBÓR NAJTAŃSZEGO LOTU
+            # ====================================================
+
+            choose_flight = (
+                najtanszy_lot
+                .locator(
+                    "input[type='submit']"
+                )
+            )
+
+            kliknij_widocznie(
+                choose_flight
+            )
+
+            # ====================================================
+            # 10. STRONA ZAKUPU
+            # ====================================================
+
+            expect(page).to_have_url(
+                re.compile(r".*/purchase\.php"),
+                timeout=10_000,
+            )
+
+            expect(
+                page.get_by_text(
+                    "Purchase Flight",
+                    exact=True,
+                )
+            ).to_be_visible()
+
+        except Exception:
+            page.screenshot(
+                path="najtanszy_lot_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            browser.close()
