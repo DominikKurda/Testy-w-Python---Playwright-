@@ -1,0 +1,118 @@
+import re
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://blazedemo.com"
+
+ROUTES = [
+    ("Paris", "London"),
+    ("Boston", "Berlin"),
+    ("Portland", "New York"),
+]
+
+
+def test_uzytkownik_moze_wybrac_rozne_miasta_wylotu_i_przylotu():
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=200,
+        )
+
+        page = browser.new_page(
+            viewport={
+                "width": 1920,
+                "height": 1080,
+            }
+        )
+
+        try:
+            for departure_city, destination_city in ROUTES:
+
+                # 1. Strona główna
+                page.goto(
+                    BASE_URL,
+                    wait_until="domcontentloaded",
+                )
+
+                departure = page.locator(
+                    "select[name='fromPort']"
+                )
+
+                destination = page.locator(
+                    "select[name='toPort']"
+                )
+
+                expect(departure).to_be_visible()
+                expect(destination).to_be_visible()
+
+                # 2. Miasto wylotu
+                departure.highlight()
+
+                departure.select_option(
+                    departure_city
+                )
+
+                expect(
+                    departure
+                ).to_have_value(
+                    departure_city
+                )
+
+                # 3. Miasto przylotu
+                destination.highlight()
+
+                destination.select_option(
+                    destination_city
+                )
+
+                expect(
+                    destination
+                ).to_have_value(
+                    destination_city
+                )
+
+                # 4. Wyszukanie lotów
+                find_flights = page.locator(
+                    "input[type='submit']"
+                )
+
+                expect(
+                    find_flights
+                ).to_be_visible()
+
+                find_flights.highlight()
+                find_flights.click(delay=150)
+
+                # 5. Strona dostępnych lotów
+                expect(page).to_have_url(
+                    re.compile(r".*/reserve\.php"),
+                    timeout=10_000,
+                )
+
+                # 6. Sprawdzenie trasy
+                heading = page.locator("h3")
+
+                expect(
+                    heading
+                ).to_contain_text(
+                    departure_city
+                )
+
+                expect(
+                    heading
+                ).to_contain_text(
+                    destination_city
+                )
+
+                # 7. Loty muszą być dostępne
+                flights = page.locator(
+                    "table tbody tr"
+                )
+
+                expect(
+                    flights.first
+                ).to_be_visible()
+
+        finally:
+            browser.close()
