@@ -1,0 +1,376 @@
+import re
+from datetime import datetime
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://www.lidl.pl"
+
+GAZETKI_URL = (
+    "https://www.lidl.pl/c/nasze-gazetki/s10008614"
+)
+
+
+# ============================================================
+# HELPERY
+# ============================================================
+
+def kliknij(locator):
+    locator.scroll_into_view_if_needed()
+
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+
+    locator.highlight()
+    locator.click(delay=150)
+
+
+def pokaz_strone(page):
+    page.wait_for_timeout(1500)
+
+
+def zamknij_cookie(page):
+    button = page.get_by_role(
+        "button",
+        name=re.compile(
+            r"akceptuj|zaakceptuj|zgadzam",
+            re.IGNORECASE,
+        ),
+    ).first
+
+    if button.count() > 0 and button.is_visible():
+        button.click()
+
+
+def pobierz_date(tekst):
+    daty = re.findall(
+        r"(\d{1,2})[.\-/](\d{1,2})[.\-/](20\d{2})",
+        tekst,
+    )
+
+    znalezione = []
+
+    for dzien, miesiac, rok in daty:
+        try:
+            znalezione.append(
+                datetime(
+                    int(rok),
+                    int(miesiac),
+                    int(dzien),
+                )
+            )
+        except ValueError:
+            pass
+
+    return max(znalezione) if znalezione else None
+
+
+def znajdz_link_do_gazetek(page):
+    linki = page.locator(
+        "a[href*='/c/nasze-gazetki/s10008614']"
+    )
+
+    for i in range(linki.count()):
+        link = linki.nth(i)
+
+        if link.is_visible():
+            return link
+
+    raise AssertionError(
+        "Nie znaleziono widocznego linku do gazetek."
+    )
+
+
+def znajdz_najnowsza_gazetke(page):
+    linki = page.locator(
+        "main a:visible:has(img)"
+    )
+
+    expect(
+        linki.first
+    ).to_be_visible(
+        timeout=15_000
+    )
+
+    kandydaci = []
+
+    for i in range(linki.count()):
+        link = linki.nth(i)
+
+        href = link.get_attribute("href")
+
+        if not href:
+            continue
+
+        tekst = " ".join(
+            link.inner_text().split()
+        )
+
+        href_lower = href.lower()
+
+        if "/p/" in href_lower:
+            continue
+
+        if "s10008614" in href_lower:
+            continue
+
+        if (
+            "gazet" not in href_lower
+            and "flyer" not in href_lower
+            and "gazet" not in tekst.lower()
+        ):
+            continue
+
+        kandydaci.append(
+            {
+                "link": link,
+                "data": pobierz_date(tekst),
+            }
+        )
+
+    assert kandydaci, (
+        "Nie znaleziono żadnej gazetki."
+    )
+
+    z_data = [
+        gazetka
+        for gazetka in kandydaci
+        if gazetka["data"] is not None
+    ]
+
+    if z_data:
+        najnowsza = max(
+            z_data,
+            key=lambda x: x["data"],
+        )
+
+        return najnowsza["link"]
+
+    return kandydaci[0]["link"]
+
+
+def sprawdz_strone_gazetki(page, numer):
+    obrazy = page.locator(
+        "img:visible"
+    )
+
+    expect(
+        obrazy.first
+    ).to_be_visible(
+        timeout=15_000
+    )
+
+    poprawny_obraz = False
+
+    for i in range(obrazy.count()):
+        obraz = obrazy.nth(i)
+
+        szerokosc = obraz.evaluate(
+            "img => img.naturalWidth"
+        )
+
+        wysokosc = obraz.evaluate(
+            "img => img.naturalHeight"
+        )
+
+        if (
+            szerokosc > 200
+            and wysokosc > 200
+        ):
+            poprawny_obraz = True
+            obraz.highlight()
+            break
+
+    assert poprawny_obraz, (
+        f"Strona {numer} gazetki "
+        f"nie załadowała się poprawnie."
+    )
+
+
+def znajdz_nastepna_strone(page):
+    lokatory = [
+        page.get_by_role(
+            "button",
+            name=re.compile(
+                r"następ|dalej|next",
+                re.IGNORECASE,
+            ),
+        ).first,
+
+        page.get_by_role(
+            "link",
+            name=re.compile(
+                r"następ|dalej|next",
+                re.IGNORECASE,
+            ),
+        ).first,
+
+        page.locator(
+            "[aria-label*='next' i]"
+        ).first,
+
+        page.locator(
+            "[aria-label*='następ' i]"
+        ).first,
+    ]
+
+    for locator in lokatory:
+        if (
+            locator.count() > 0
+            and locator.is_visible()
+            and locator.is_enabled()
+        ):
+            return locator
+
+    return None
+
+
+# ============================================================
+# TEST
+# ============================================================
+
+def test_wszystkie_strony_najnowszej_gazetki_lidl_wyswietlaja_sie_poprawnie():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=200,
+            args=["--start-maximized"],
+        )
+
+        context = browser.new_context(
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        try:
+            # ====================================================
+            # 1. STRONA GŁÓWNA LIDL
+            # ====================================================
+
+            page.goto(
+                BASE_URL,
+                wait_until="domcontentloaded",
+                timeout=30_000,
+            )
+
+            expect(
+                page
+            ).to_have_url(
+                re.compile(r"lidl\.pl")
+            )
+
+            zamknij_cookie(page)
+
+            # ====================================================
+            # 2. PRZEJŚCIE DO "NASZE GAZETKI"
+            # ====================================================
+
+            gazetki = znajdz_link_do_gazetek(
+                page
+            )
+
+            kliknij(
+                gazetki
+            )
+
+            expect(
+                page
+            ).to_have_url(
+                re.compile(
+                    r"/c/nasze-gazetki/"
+                ),
+                timeout=15_000,
+            )
+
+            # ====================================================
+            # 3. WYBÓR NAJNOWSZEJ GAZETKI
+            # ====================================================
+
+            najnowsza = znajdz_najnowsza_gazetke(
+                page
+            )
+
+            najnowsza.highlight()
+
+            pokaz_strone(page)
+
+            kliknij(
+                najnowsza
+            )
+
+            # ====================================================
+            # 4. GAZETKA OTWARTA
+            # ====================================================
+
+            expect(
+                page.locator("body")
+            ).to_be_visible()
+
+            expect(
+                page
+            ).to_have_url(
+                re.compile(
+                    r"gazet|flyer",
+                    re.IGNORECASE,
+                ),
+                timeout=15_000,
+            )
+
+            # ====================================================
+            # 5. PIERWSZA STRONA
+            # ====================================================
+
+            numer_strony = 1
+
+            sprawdz_strone_gazetki(
+                page,
+                numer_strony,
+            )
+
+            pokaz_strone(page)
+
+            # ====================================================
+            # 6. PRZEWIJANIE CAŁEJ GAZETKI
+            # ====================================================
+
+            while numer_strony < 100:
+
+                next_button = znajdz_nastepna_strone(
+                    page
+                )
+
+                if next_button is None:
+                    break
+
+                kliknij(
+                    next_button
+                )
+
+                numer_strony += 1
+
+                sprawdz_strone_gazetki(
+                    page,
+                    numer_strony,
+                )
+
+                pokaz_strone(page)
+
+            # ====================================================
+            # 7. SPRAWDZENIE
+            # ====================================================
+
+            assert numer_strony > 1, (
+                "Nie udało się przewinąć gazetki."
+            )
+
+        except Exception:
+            page.screenshot(
+                path="lidl_gazetka_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            browser.close()
