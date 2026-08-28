@@ -1,0 +1,227 @@
+import re
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "https://www.lidl.pl"
+SZUKANY_PRODUKT = "wiertarkowkrętarka"
+
+
+def kliknij(locator):
+    locator.scroll_into_view_if_needed()
+    expect(locator).to_be_visible()
+    expect(locator).to_be_enabled()
+    locator.highlight()
+    locator.click(delay=150)
+
+
+def pokaz_wynik(page):
+    page.wait_for_timeout(3000)
+
+
+def zamknij_cookie(page):
+    button = page.get_by_role(
+        "button",
+        name=re.compile(
+            r"akceptuj|zaakceptuj|zgadzam",
+            re.IGNORECASE,
+        ),
+    ).first
+
+    if button.count() > 0 and button.is_visible():
+        button.click()
+
+
+def wybierz_wariant(page):
+    dialog = page.get_by_role(
+        "dialog",
+        name=re.compile(
+            r"wybierz",
+            re.IGNORECASE,
+        ),
+    ).first
+
+    if dialog.count() == 0 or not dialog.is_visible():
+        return
+
+    radio = dialog.locator(
+        "input[type='radio']:not([disabled])"
+    ).first
+
+    label = radio.locator(
+        "xpath=ancestor::label[1]"
+    )
+
+    kliknij(label)
+
+    expect(radio).to_be_checked()
+
+    dodaj = dialog.get_by_role(
+        "button",
+        name=re.compile(
+            r"dodaj do koszyka",
+            re.IGNORECASE,
+        ),
+    ).first
+
+    kliknij(dodaj)
+
+
+def test_uzytkownik_moze_wyszukac_produkt_i_dodac_go_do_koszyka():
+    with sync_playwright() as p:
+
+        browser = p.chromium.launch(
+            headless=False,
+            slow_mo=200,
+            args=["--start-maximized"],
+        )
+
+        context = browser.new_context(
+            no_viewport=True,
+        )
+
+        page = context.new_page()
+
+        try:
+            # ====================================================
+            # 1. OTWARCIE LIDL
+            # ====================================================
+
+            page.goto(
+                BASE_URL,
+                wait_until="domcontentloaded",
+                timeout=30_000,
+            )
+
+            zamknij_cookie(page)
+
+            # ====================================================
+            # 2. WYSZUKANIE PRODUKTU
+            # ====================================================
+
+            search = page.locator(
+                "input[type='search']"
+            ).first
+
+            expect(search).to_be_visible()
+
+            search.highlight()
+            search.fill(SZUKANY_PRODUKT)
+
+            expect(
+                search
+            ).to_have_value(
+                SZUKANY_PRODUKT
+            )
+
+            search.press("Enter")
+
+            # ====================================================
+            # 3. OTWARCIE PIERWSZEGO PRODUKTU
+            # ====================================================
+
+            products = page.locator(
+                "a[href*='/p/']"
+            )
+
+            expect(
+                products.first
+            ).to_be_visible(
+                timeout=15_000
+            )
+
+            kliknij(
+                products.first
+            )
+
+            # ====================================================
+            # 4. NAZWA PRODUKTU
+            # ====================================================
+
+            product_name = page.locator(
+                "h1"
+            ).first
+
+            expect(
+                product_name
+            ).to_be_visible()
+
+            nazwa_produktu = (
+                product_name
+                .inner_text()
+                .strip()
+            )
+
+            product_name.highlight()
+
+            # ====================================================
+            # 5. DODANIE DO KOSZYKA
+            # ====================================================
+
+            add_button = page.get_by_role(
+                "button",
+                name=re.compile(
+                    r"dodaj do koszyka",
+                    re.IGNORECASE,
+                ),
+            ).first
+
+            kliknij(
+                add_button
+            )
+
+            # jeśli Lidl wymaga wyboru wariantu
+            wybierz_wariant(
+                page
+            )
+
+            pokaz_wynik(page)
+
+            # ====================================================
+            # 6. KOSZYK
+            # ====================================================
+
+            page.goto(
+                f"{BASE_URL}/otc/cart",
+                wait_until="domcontentloaded",
+            )
+
+            expect(
+                page
+            ).to_have_url(
+                re.compile(r".*/otc/cart")
+            )
+
+            # ====================================================
+            # 7. SPRAWDZENIE PRODUKTU
+            # ====================================================
+
+            expect(
+                page.locator("body")
+            ).to_contain_text(
+                nazwa_produktu,
+                timeout=15_000,
+            )
+
+            produkt = page.get_by_text(
+                nazwa_produktu,
+                exact=False,
+            ).first
+
+            expect(
+                produkt
+            ).to_be_visible()
+
+            produkt.highlight()
+
+            pokaz_wynik(page)
+
+        except Exception:
+            page.screenshot(
+                path="lidl_koszyk_failure.png",
+                full_page=True,
+            )
+            raise
+
+        finally:
+            browser.close()
