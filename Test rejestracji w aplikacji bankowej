@@ -1,0 +1,41 @@
+"""Test rejestracji konta osobistego w NovaBank (Playwright + pytest)."""
+
+import re
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "http://127.0.0.1:8005"
+
+
+def test_uzytkownik_moze_zalozyc_konto_osobiste():
+    email = f"dominik.qa.{uuid4().hex[:12]}@example.com"
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=False, slow_mo=250)
+        try:
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            page.goto(BASE_URL)
+            page.get_by_test_id("hero-register").click()
+
+            expect(page.get_by_test_id("register-form")).to_be_visible()
+            page.get_by_test_id("first-name").fill("Dominik")
+            page.get_by_test_id("last-name").fill("Testowy")
+            page.get_by_test_id("email").fill(email)
+            page.get_by_test_id("age").fill("25")
+            page.get_by_test_id("account-type-personal").check()
+            page.get_by_test_id("accept-terms").check()
+            page.get_by_test_id("confirm-registration-data").check()
+            page.get_by_test_id("password").fill("Bezpieczne123!")
+            page.get_by_test_id("password-repeat").fill("Bezpieczne123!")
+            page.get_by_test_id("register-submit").click()
+
+            expect(page).to_have_url(f"{BASE_URL}/dashboard")
+            expect(page.get_by_test_id("alert").filter(has_text="Konto osobiste zostało utworzone")).to_be_visible()
+            expect(page.get_by_test_id("dashboard-account-type")).to_contain_text("Konto osobiste · wiek: 25")
+            expect(page.get_by_test_id("balance")).to_contain_text("10 000,00 zł")
+            expect(page.get_by_test_id("account-number")).to_have_text(re.compile(r"PL\d{26}"))
+        finally:
+            browser.close()
+
