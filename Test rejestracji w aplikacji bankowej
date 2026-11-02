@@ -1,41 +1,137 @@
-"""Test rejestracji konta osobistego w NovaBank (Playwright + pytest)."""
+""Test rejestracji nowego użytkownika w NovaBank."""
 
+import random
 import re
 from uuid import uuid4
 
-from playwright.sync_api import expect, sync_playwright
+import pytest
+from playwright.sync_api import Error, expect, sync_playwright
 
 
-BASE_URL = "http://127.0.0.1:8005"
+# Wpisz adres z działającej wersji swojego testu.
+BASE_URL = "http://127.0.0.1:8006"
+
+PASSWORD = "Bezpieczne123!"
+
+FIRST_NAMES = ["Dominik", "Jan", "Adam", "Anna", "Julia", "Monika"]
+LAST_NAMES = ["Kowalski", "Nowak", "Mazur", "Lis", "Wójcik", "Zając"]
 
 
 def test_uzytkownik_moze_zalozyc_konto_osobiste():
-    email = f"dominik.qa.{uuid4().hex[:12]}@example.com"
+    base_url = BASE_URL.rstrip("/")
+
+    # Losowe dane i nowy e-mail przy każdym uruchomieniu.
+    first_name = random.choice(FIRST_NAMES)
+    last_name = random.choice(LAST_NAMES)
+    age = str(random.randint(18, 80))
+    email = f"uzytkownik.{uuid4().hex}@example.com"
 
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(headless=False, slow_mo=250)
+        browser = playwright.chromium.launch(
+            headless=False,
+            slow_mo=250,
+        )
+
         try:
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
-            page.goto(BASE_URL)
-            page.get_by_test_id("hero-register").click()
+            page = browser.new_page(
+                viewport={"width": 1440, "height": 900}
+            )
 
-            expect(page.get_by_test_id("register-form")).to_be_visible()
-            page.get_by_test_id("first-name").fill("Dominik")
-            page.get_by_test_id("last-name").fill("Testowy")
-            page.get_by_test_id("email").fill(email)
-            page.get_by_test_id("age").fill("25")
-            page.get_by_test_id("account-type-personal").check()
-            page.get_by_test_id("accept-terms").check()
-            page.get_by_test_id("confirm-registration-data").check()
-            page.get_by_test_id("password").fill("Bezpieczne123!")
-            page.get_by_test_id("password-repeat").fill("Bezpieczne123!")
-            page.get_by_test_id("register-submit").click()
+            # 1. Otwarcie aplikacji.
+            try:
+                response = page.goto(
+                    base_url,
+                    wait_until="domcontentloaded",
+                    timeout=15_000,
+                )
+            except Error as error:
+                if "ERR_CONNECTION_REFUSED" in str(error):
+                    pytest.fail(
+                        f"NovaBank nie odpowiada: {base_url}. "
+                        "Uruchom aplikację i sprawdź BASE_URL.",
+                        pytrace=False,
+                    )
+                raise
 
-            expect(page).to_have_url(f"{BASE_URL}/dashboard")
-            expect(page.get_by_test_id("alert").filter(has_text="Konto osobiste zostało utworzone")).to_be_visible()
-            expect(page.get_by_test_id("dashboard-account-type")).to_contain_text("Konto osobiste · wiek: 25")
-            expect(page.get_by_test_id("balance")).to_contain_text("10 000,00 zł")
-            expect(page.get_by_test_id("account-number")).to_have_text(re.compile(r"PL\d{26}"))
+            assert response is not None, "Brak odpowiedzi serwera."
+            assert response.ok, (
+                f"NovaBank zwrócił HTTP {response.status}."
+            )
+
+            # 2. Otwarcie formularza rejestracji.
+            register = page.get_by_test_id("hero-register")
+            expect(register).to_be_visible()
+            register.click()
+
+            expect(
+                page.get_by_test_id("register-form")
+            ).to_be_visible()
+
+            # 3. Wypełnienie danych nowego użytkownika.
+            fields = {
+                "first-name": first_name,
+                "last-name": last_name,
+                "email": email,
+                "age": age,
+                "password": PASSWORD,
+                "password-repeat": PASSWORD,
+            }
+
+            for test_id, value in fields.items():
+                field = page.get_by_test_id(test_id)
+                expect(field).to_be_visible()
+                field.fill(value)
+                expect(field).to_have_value(value)
+
+            # 4. Zaznaczenie wymaganych zgód.
+            for test_id in (
+                "accept-terms",
+                "confirm-registration-data",
+            ):
+                checkbox = page.get_by_test_id(test_id)
+                checkbox.check()
+                expect(checkbox).to_be_checked()
+
+            # 5. Wysłanie formularza.
+            submit = page.get_by_test_id("register-submit")
+            expect(submit).to_be_visible()
+            expect(submit).to_be_enabled()
+            submit.click()
+
+            # 6. Potwierdzenie utworzenia konta.
+            expect(page).to_have_url(
+                f"{base_url}/dashboard",
+                timeout=15_000,
+            )
+
+            expect(
+                page.get_by_test_id("alert").filter(
+                    has_text="Konto osobiste zostało utworzone"
+                )
+            ).to_be_visible()
+
+            expect(
+                page.get_by_test_id("dashboard-account-type")
+            ).to_contain_text(f"Konto osobiste · wiek: {age}")
+
+            expect(
+                page.get_by_test_id("balance")
+            ).to_contain_text("10 000,00 zł")
+
+            expect(
+                page.get_by_test_id("account-number")
+            ).to_have_text(re.compile(r"PL\d{26}"))
+
+            print(
+                f"\nUtworzono użytkownika:\n"
+                f"Imię i nazwisko: {first_name} {last_name}\n"
+                f"Wiek: {age}\n"
+                f"E-mail: {email}"
+            )
+
         finally:
             browser.close()
 
+
+if __name__ == "__main__":
+    test_uzytkownik_moze_zalozyc_konto_osobiste()
