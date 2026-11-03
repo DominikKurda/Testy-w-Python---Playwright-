@@ -1,0 +1,76 @@
+"""Test logowania do NovaBank."""
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "http://127.0.0.1:8006"
+EMAIL = "demo@novabank.pl"
+PASSWORD = "Demo123!"
+
+
+def test_uzytkownik_moze_sie_zalogowac():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=False,
+            slow_mo=250,
+        )
+
+        try:
+            page = browser.new_page(
+                viewport={"width": 1440, "height": 900}
+            )
+
+            # 1. Otwarcie NovaBank.
+            page.goto(BASE_URL, wait_until="domcontentloaded")
+
+            # 2. Otwarcie formularza logowania.
+            login_button = page.get_by_test_id("hero-login")
+            expect(login_button).to_be_visible()
+            login_button.click()
+
+            form = page.get_by_test_id("login-form")
+            expect(form).to_be_visible()
+
+            # 3. Wpisanie e-maila.
+            email_field = form.get_by_test_id("email")
+            expect(email_field).to_be_visible()
+            email_field.fill(EMAIL)
+            expect(email_field).to_have_value(EMAIL)
+
+            # 4. Wpisanie hasła.
+            password_field = form.get_by_test_id("password")
+            expect(password_field).to_be_visible()
+            password_field.fill(PASSWORD)
+
+            # 5. Zalogowanie.
+            submit = form.get_by_test_id("login-submit")
+            expect(submit).to_be_visible()
+            expect(submit).to_be_enabled()
+            submit.click()
+
+            # 6. Sprawdzenie panelu konta.
+            expect(page).to_have_url(
+                f"{BASE_URL}/dashboard",
+                timeout=15_000,
+            )
+
+            expect(
+                page.get_by_test_id("dashboard-account-type")
+            ).to_be_visible()
+
+            expect(
+                page.get_by_test_id("balance")
+            ).to_be_visible()
+
+            expect(
+                page.get_by_test_id("account-number")
+            ).to_be_visible()
+
+            print(f"\nZalogowano poprawnie: {EMAIL}")
+
+        finally:
+            browser.close()
+
+
+if __name__ == "__main__":
+    test_uzytkownik_moze_sie_zalogowac()
