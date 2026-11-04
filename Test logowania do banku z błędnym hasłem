@@ -1,0 +1,86 @@
+"""Test odrzucenia logowania z błędnym hasłem."""
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "http://127.0.0.1:8008"
+EMAIL = "dominikkurda9@gmail.com"
+WRONG_PASSWORD = "CelowoBledneHaslo987!"
+
+
+def test_logowanie_z_blednym_haslem():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=False,
+            slow_mo=250,
+        )
+
+        try:
+            context = browser.new_context(
+                viewport={"width": 1440, "height": 900}
+            )
+            page = context.new_page()
+
+            # 1. Otwarcie formularza logowania.
+            print("\n1. Otwieram formularz logowania.")
+            page.goto(
+                f"{BASE_URL}/login",
+                wait_until="domcontentloaded",
+            )
+
+            form = page.get_by_test_id("login-form")
+            expect(form).to_be_visible()
+
+            # 2. Wpisanie e-maila istniejącego konta.
+            print("2. Wpisuję e-mail użytkownika.")
+            email_field = form.get_by_test_id("email")
+            expect(email_field).to_be_visible()
+            email_field.fill(EMAIL)
+            expect(email_field).to_have_value(EMAIL)
+
+            # 3. Wpisanie celowo błędnego hasła.
+            print("3. Wpisuję błędne hasło.")
+            password_field = form.get_by_test_id("password")
+            expect(password_field).to_be_visible()
+            password_field.fill(WRONG_PASSWORD)
+
+            # 4. Próba logowania.
+            print("4. Klikam Zaloguj się.")
+            submit = form.get_by_test_id("login-submit")
+            expect(submit).to_be_visible()
+            expect(submit).to_be_enabled()
+            submit.click()
+
+            # 5. Sprawdzenie odpowiedzi aplikacji.
+            print("5. Sprawdzam komunikat o błędnych danych.")
+            error = page.get_by_test_id("alert").filter(
+                has_text="Nieprawidłowy e-mail lub hasło."
+            )
+            expect(error).to_be_visible()
+            expect(error).to_have_text(
+                "Nieprawidłowy e-mail lub hasło."
+            )
+
+            expect(page).to_have_url(f"{BASE_URL}/login")
+            expect(form).to_be_visible()
+            expect(page.get_by_test_id("balance")).not_to_be_visible()
+
+            # 6. Próba bezpośredniego wejścia na chroniony pulpit.
+            print("6. Sprawdzam, czy pulpit jest niedostępny.")
+            page.goto(
+                f"{BASE_URL}/dashboard",
+                wait_until="domcontentloaded",
+            )
+
+            expect(page).to_have_url(f"{BASE_URL}/login")
+            expect(page.get_by_test_id("login-form")).to_be_visible()
+            expect(page.get_by_test_id("balance")).not_to_be_visible()
+
+            print("TEST ZALICZONY: błędne hasło nie pozwoliło się zalogować.")
+
+        finally:
+            browser.close()
+
+
+if __name__ == "__main__":
+    test_logowanie_z_blednym_haslem()
