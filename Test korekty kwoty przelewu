@@ -1,0 +1,252 @@
+"""Test poprawienia kwoty przelewu po błędzie braku środków."""
+
+import re
+from decimal import Decimal
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "http://127.0.0.1:8008"
+EMAIL = "dominikkurda9@gmail.com"
+PASSWORD = "domino2024D"
+
+RECIPIENT = "Anna Nowak"
+VALID_AMOUNT = Decimal("100.00")
+EXCESS = Decimal("100.00")
+
+
+def odczytaj_kwote(locator):
+    expect(locator).to_be_visible()
+    text = re.sub(r"\s+", "", locator.inner_text())
+    return Decimal(
+        text.replace("zł", "").replace(",", ".").replace("−", "-")
+    )
+
+
+def wypelnij(form, test_id, value):
+    field = form.get_by_test_id(test_id)
+    expect(field).to_be_visible()
+    field.fill(value)
+    expect(field).to_have_value(value)
+
+
+def sprawdz_saldo(page, expected):
+    page.goto(f"{BASE_URL}/transfer")
+    expect(page.get_by_test_id("transfer-form")).to_be_visible()
+
+    actual = odczytaj_kwote(page.get_by_test_id("available-balance"))
+    assert actual == expected, (
+        f"Oczekiwane saldo: {expected:.2f} zł, "
+        f"otrzymane: {actual:.2f} zł."
+    )
+
+
+def otworz_historie(page, title):
+    page.goto(f"{BASE_URL}/transactions")
+    expect(page.get_by_test_id("transaction-filter")).to_be_visible()
+
+    return page.get_by_test_id("transaction-row").filter(
+        has_text=title
+    )
+
+
+def test_poprawienie_kwoty_po_odrzuceniu_przelewu():
+    title = f"QA poprawa kwoty {uuid4().hex}"
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=False,
+            slow_mo=250,
+        )
+
+        try:
+            context = browser.new_context(
+                viewport={"width": 1440, "height": 900}
+            )
+            page = context.new_page()
+
+            # 1. Logowanie.
+            print("\n1. Logowanie.")
+            page.goto(f"{BASE_URL}/login")
+
+            login = page.get_by_test_id("login-form")
+            expect(login).to_be_visible()
+            wypelnij(login, "email", EMAIL)
+            login.get_by_test_id("password").fill(PASSWORD)
+            login.get_by_test_id("login-submit").click()
+
+            expect(page).to_have_url(f"{BASE_URL}/dashboard")
+
+            # 2. Odczyt salda i przygotowanie błędnej kwoty.
+            print("2. Przygotowanie przelewu ponad saldo.")
+            page.get_by_test_id("nav-transfer").click()
+
+            form = page.get_by_test_id("transfer-form")
+            expect(form).to_be_visible()
+
+            balance_before = odczytaj_kwote(
+                page.get_by_test_id("available-balance")
+            )
+            invalid_amount = balance_before + EXCESS
+
+            assert balance_before >= VALID_AMOUNT, (
+                "Do poprawnej części scenariusza potrzeba minimum 100 zł."
+            )
+            assert invalid_amount <= Decimal("1000000.00"), (
+                "Użyj konta z saldem do 999 900 zł, aby sprawdzać "
+                "brak środków, a nie maksymalną kwotę formularza."
+            )
+
+            account = page.get_by_test_id("test-recipient-account")
+            expect(account).to_have_text(re.compile(r"PL\d{26}"))
+            account_number = account.inner_text().strip()
+
+            fields = {
+                "recipient": RECIPIENT,
+                "recipient-account": account_number,
+                "amount": f"{invalid_amount:.2f}",
+                "transfer-title": title,
+            }
+
+            for test_id, value in fields.items():
+                wypelnij(form, test_id, value)
+
+            page.get_by_test_id("transfer-submit").click()
+
+            # 3. Odrzucenie i zachowanie danych formularza.
+            print("3. Sprawdzenie błędu i zachowania danych.")
+            error = page.get_by_test_id("amount-error")
+            expect(error).to_be_visible()
+            expect(error).to_contain_text(
+                "Brak środków. Dostępne saldo:"
+            )
+            expect(form.get_by_test_id("amount")).to_have_attribute(
+                "aria-invalid", "true"
+            )
+            expect(
+                page.get_by_test_id("transfer-summary")
+            ).not_to_be_visible()
+
+            for test_id, value in fields.items():
+                expect(form.get_by_test_id(test_id)).to_have_value(value)
+
+            # 4. Druga karta korzysta z tej samej sesji.
+            # Pierwsza pozostaje na formularzu z błędem.
+            print("4. Kontrola salda i braku transakcji.")
+            control_page = context.new_page()
+            control_page.bring_to_front()
+
+            sprawdz_saldo(control_page, balance_before)
+
+            rejected_rows = otworz_historie(control_page, title)
+            expect(rejected_rows).to_have_count(0)
+
+            # 5. Zmieniamy wyłącznie kwotę.
+            print("5. Poprawienie kwoty na 100 zł.")
+            page.bring_to_front()
+            expect(form).to_be_visible()
+
+            wypelnij(form, "amount", f"{VALID_AMOUNT:.2f}")
+
+            for test_id in (
+                "recipient",
+                "recipient-account",
+                "transfer-title",
+            ):
+                expect(form.get_by_test_id(test_id)).to_have_value(
+                    fields[test_id]
+                )
+
+            page.get_by_test_id("transfer-submit").click()
+
+            # 6. Poprawne podsumowanie po wcześniejszym błędzie.
+            print("6. Sprawdzenie poprawnego podsumowania.")
+            summary = page.get_by_test_id("transfer-summary")
+            expect(summary).to_be_visible()
+            expect(error).not_to_be_visible()
+
+            expect(summary).to_contain_text(RECIPIENT)
+            expect(summary).to_contain_text(account_number)
+            expect(summary).to_contain_text(title)
+            expect(
+                page.get_by_test_id("recipient-name-verified")
+            ).to_be_visible()
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("transfer-summary-amount")
+            ) == VALID_AMOUNT
+
+            expected_balance = balance_before - VALID_AMOUNT
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("transfer-summary-balance")
+            ) == expected_balance
+
+            # Jeszcze przed zatwierdzeniem środki muszą być na koncie.
+            control_page.bring_to_front()
+            sprawdz_saldo(control_page, balance_before)
+            page.bring_to_front()
+
+            # Możliwe ostrzeżenie przy kolejnym uruchomieniu testu.
+            similar = page.get_by_test_id("confirm-similar-transfer")
+            if similar.count() > 0:
+                similar.check()
+                expect(similar).to_be_checked()
+
+            # 7. Wykonanie poprawionego przelewu.
+            print("7. Wysłanie przelewu 100 zł.")
+            confirm = page.get_by_test_id("transfer-confirm")
+            expect(confirm).to_be_enabled()
+            confirm.click()
+
+            expect(page).to_have_url(
+                re.compile(
+                    rf"^{re.escape(BASE_URL)}/transfer/done/\d+$"
+                ),
+                timeout=15_000,
+            )
+
+            done = page.get_by_test_id("transfer-done")
+            expect(done).to_be_visible()
+            expect(done).to_contain_text("Zaksięgowana")
+            expect(done).to_contain_text(title)
+            expect(done).to_contain_text(account_number)
+
+            assert odczytaj_kwote(
+                done.locator(".balance")
+            ) == VALID_AMOUNT
+
+            # 8. Dokładnie jedno obciążenie na właściwą kwotę.
+            print("8. Sprawdzenie salda i historii.")
+            control_page.bring_to_front()
+            sprawdz_saldo(control_page, expected_balance)
+
+            rows = otworz_historie(control_page, title)
+            expect(rows).to_have_count(1)
+            expect(rows).to_contain_text(RECIPIENT)
+            expect(rows).to_contain_text(account_number)
+
+            debit = rows.locator("td.amount.debit")
+            expect(debit).to_be_visible()
+
+            assert odczytaj_kwote(debit) == -VALID_AMOUNT, (
+                "Historia powinna zawierać jedno obciążenie na 100 zł."
+            )
+
+            print(
+                "\nTEST ZALICZONY\n"
+                f"Odrzucona kwota: {invalid_amount:.2f} zł\n"
+                f"Wykonany przelew: {VALID_AMOUNT:.2f} zł\n"
+                f"Saldo przed: {balance_before:.2f} zł\n"
+                f"Saldo po: {expected_balance:.2f} zł\n"
+                "Dane formularza zachowane.\n"
+                "W historii dokładnie jeden przelew z tytułem testu."
+            )
+
+        finally:
+            browser.close()
+
+
+if __name__ == "__main__":
+    test_poprawienie_kwoty_po_odrzuceniu_przelewu()
