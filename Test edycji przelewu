@@ -1,0 +1,213 @@
+"""Test edycji kwoty przelewu w NovaBank."""
+
+import re
+from decimal import Decimal
+from uuid import uuid4
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "http://127.0.0.1:8008"
+EMAIL = "dominikkurda9@gmail.com"
+PASSWORD = "domino2024D"
+
+RECIPIENT = "Anna Nowak"
+INITIAL_AMOUNT = Decimal("1000.00")
+FINAL_AMOUNT = Decimal("1500.00")
+
+
+def odczytaj_kwote(locator):
+    expect(locator).to_be_visible()
+    text = re.sub(r"\s+", "", locator.inner_text())
+    return Decimal(text.replace("zł", "").replace(",", "."))
+
+
+def wypelnij_pole(form, test_id, value):
+    field = form.get_by_test_id(test_id)
+    expect(field).to_be_visible()
+    field.fill(value)
+    expect(field).to_have_value(value)
+
+
+def test_edycja_przelewu():
+    title = f"QA edycja {uuid4().hex[:12]}"
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=False,
+            slow_mo=250,
+        )
+
+        try:
+            page = browser.new_page(
+                viewport={"width": 1440, "height": 900}
+            )
+
+            # 1. Logowanie.
+            print("\n1. Logowanie.")
+            page.goto(f"{BASE_URL}/login")
+
+            login = page.get_by_test_id("login-form")
+            expect(login).to_be_visible()
+            wypelnij_pole(login, "email", EMAIL)
+
+            # Hasła nie umieszczamy w komunikatach asercji.
+            login.get_by_test_id("password").fill(PASSWORD)
+            login.get_by_test_id("login-submit").click()
+
+            expect(page).to_have_url(f"{BASE_URL}/dashboard")
+
+            # 2. Przygotowanie danych przelewu.
+            print("2. Przygotowanie przelewu 1000 zł.")
+            page.get_by_test_id("nav-transfer").click()
+
+            form = page.get_by_test_id("transfer-form")
+            expect(form).to_be_visible()
+
+            balance_before = odczytaj_kwote(
+                page.get_by_test_id("available-balance")
+            )
+            assert balance_before >= FINAL_AMOUNT, (
+                f"Potrzeba {FINAL_AMOUNT} zł, "
+                f"a dostępne saldo wynosi {balance_before} zł."
+            )
+
+            account = page.get_by_test_id("test-recipient-account")
+            expect(account).to_have_text(re.compile(r"PL\d{26}"))
+            account_number = account.inner_text().strip()
+
+            fields = {
+                "recipient": RECIPIENT,
+                "recipient-account": account_number,
+                "amount": str(INITIAL_AMOUNT),
+                "transfer-title": title,
+            }
+
+            for test_id, value in fields.items():
+                wypelnij_pole(form, test_id, value)
+
+            form.get_by_test_id("transfer-submit").click()
+
+            # 3. Sprawdzenie pierwszego podsumowania.
+            print("3. Sprawdzenie podsumowania 1000 zł.")
+            summary = page.get_by_test_id("transfer-summary")
+            expect(summary).to_be_visible()
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("transfer-summary-amount")
+            ) == INITIAL_AMOUNT
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("transfer-summary-balance")
+            ) == balance_before - INITIAL_AMOUNT
+
+            # 4. Powrót do formularza.
+            print("4. Kliknięcie „Popraw dane”.")
+            edit = page.get_by_test_id("transfer-edit")
+            expect(edit).to_be_visible()
+            expect(edit).to_be_enabled()
+            edit.click()
+
+            expect(form).to_be_visible()
+
+            # Wszystkie wcześniej wpisane dane muszą pozostać.
+            for test_id, value in fields.items():
+                expect(form.get_by_test_id(test_id)).to_have_value(value)
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("available-balance")
+            ) == balance_before, (
+                "Saldo zmieniło się przed wysłaniem przelewu."
+            )
+
+            # 5. Zmiana tylko kwoty.
+            print("5. Zmiana kwoty z 1000 zł na 1500 zł.")
+            wypelnij_pole(form, "amount", str(FINAL_AMOUNT))
+            form.get_by_test_id("transfer-submit").click()
+
+            expect(summary).to_be_visible()
+            expect(summary).to_contain_text(RECIPIENT)
+            expect(summary).to_contain_text(account_number)
+            expect(summary).to_contain_text(title)
+
+            expect(
+                page.get_by_test_id("recipient-name-verified")
+            ).to_be_visible()
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("transfer-summary-amount")
+            ) == FINAL_AMOUNT, (
+                "Podsumowanie nie pokazuje zmienionej kwoty."
+            )
+
+            expected_balance = balance_before - FINAL_AMOUNT
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("transfer-summary-balance")
+            ) == expected_balance, (
+                "Przewidywane saldo nie uwzględnia nowej kwoty."
+            )
+
+            # Aplikacja ostrzega o podobnych przelewach
+            # wykonanych w ostatnich 10 minutach.
+            similar = page.get_by_test_id("confirm-similar-transfer")
+            if similar.count() > 0:
+                similar.check()
+                expect(similar).to_be_checked()
+
+            # 6. Wysłanie zmienionego przelewu.
+            print("6. Zatwierdzenie przelewu 1500 zł.")
+            confirm = page.get_by_test_id("transfer-confirm")
+            expect(confirm).to_be_enabled()
+            confirm.click()
+
+            expect(page).to_have_url(
+                re.compile(
+                    rf"^{re.escape(BASE_URL)}/transfer/done/\d+$"
+                ),
+                timeout=15_000,
+            )
+
+            done = page.get_by_test_id("transfer-done")
+            expect(done).to_be_visible()
+            expect(done).to_contain_text("Zaksięgowana")
+            expect(done).to_contain_text(RECIPIENT)
+            expect(done).to_contain_text(account_number)
+            expect(done).to_contain_text(title)
+
+            # W przesłanym kodzie kwota potwierdzenia ma klasę balance.
+            assert odczytaj_kwote(
+                done.locator(".balance")
+            ) == FINAL_AMOUNT, (
+                "Potwierdzenie pokazuje inną kwotę niż 1500 zł."
+            )
+
+            # 7. Kontrola faktycznego salda.
+            print("7. Sprawdzenie obciążenia konta.")
+            page.get_by_test_id("nav-transfer").click()
+            expect(form).to_be_visible()
+
+            balance_after = odczytaj_kwote(
+                page.get_by_test_id("available-balance")
+            )
+
+            assert balance_after == expected_balance, (
+                f"Oczekiwane saldo: {expected_balance} zł, "
+                f"otrzymane: {balance_after} zł. "
+                "Konto powinno zostać obciążone tylko kwotą 1500 zł."
+            )
+
+            print(
+                "\nTEST ZALICZONY\n"
+                "Kwota została zmieniona: 1000 zł → 1500 zł.\n"
+                "Dane odbiorcy i tytuł zostały zachowane.\n"
+                f"Saldo przed: {balance_before} zł\n"
+                f"Saldo po: {balance_after} zł"
+            )
+
+        finally:
+            browser.close()
+
+
+if __name__ == "__main__":
+    test_edycja_przelewu()
