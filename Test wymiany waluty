@@ -1,0 +1,211 @@
+"""Test zakupu 100 EUR za PLN w NovaBank."""
+
+import re
+from decimal import Decimal, ROUND_HALF_UP
+
+from playwright.sync_api import expect, sync_playwright
+
+
+BASE_URL = "http://127.0.0.1:8008"
+EMAIL = "dominikkurda9@gmail.com"
+PASSWORD = "domino2024D"
+
+CURRENCY = "EUR"
+AMOUNT = Decimal("100.00")
+
+
+def odczytaj_kwote(locator):
+    expect(locator).to_be_visible()
+    text = re.sub(r"\s+", "", locator.inner_text())
+    text = re.sub(r"[^0-9,.\-−+]", "", text)
+    return Decimal(text.replace(",", ".").replace("−", "-"))
+
+
+def test_kupno_euro():
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(
+            headless=False,
+            slow_mo=250,
+        )
+
+        try:
+            page = browser.new_page(
+                viewport={"width": 1440, "height": 900}
+            )
+
+            # 1. Logowanie.
+            print("\n1. Logowanie.")
+            page.goto(f"{BASE_URL}/login")
+
+            login = page.get_by_test_id("login-form")
+            expect(login).to_be_visible()
+
+            login.get_by_test_id("email").fill(EMAIL)
+            login.get_by_test_id("password").fill(PASSWORD)
+            login.get_by_test_id("login-submit").click()
+
+            expect(page).to_have_url(f"{BASE_URL}/dashboard")
+
+            # 2. Otwarcie kantoru i odczyt obu sald.
+            print("2. Odczyt salda PLN i EUR.")
+            page.get_by_test_id("nav-exchange").click()
+
+            form = page.get_by_test_id("exchange-form")
+            expect(form).to_be_visible()
+
+            pln_before = odczytaj_kwote(
+                page.get_by_test_id("exchange-balance-PLN")
+            )
+            eur_before = odczytaj_kwote(
+                page.get_by_test_id("exchange-balance-EUR")
+            )
+
+            # Historia nie ma filtrów po wejściu przez menu.
+            history_rows = page.get_by_test_id(
+                re.compile(r"^exchange-history-row-\d+$")
+            )
+            history_count_before = history_rows.count()
+
+            # 3. Wybór zakupu 100 EUR.
+            print("3. Przygotowanie zakupu 100 EUR.")
+            currency = form.get_by_test_id("exchange-currency")
+            currency.select_option(CURRENCY)
+            expect(currency).to_have_value(CURRENCY)
+
+            direction = form.get_by_test_id("exchange-direction")
+            direction.select_option("buy")
+            expect(direction).to_have_value("buy")
+
+            amount = form.get_by_test_id("exchange-amount")
+            amount.fill(f"{AMOUNT:.2f}")
+            expect(amount).to_have_value(f"{AMOUNT:.2f}")
+
+            submit = form.get_by_test_id("exchange-submit")
+            expect(
+                submit,
+                "Kantor potrzebuje dostępnych lub zapisanych kursów NBP.",
+            ).to_be_enabled()
+            submit.click()
+
+            # 4. Sprawdzenie podsumowania.
+            print("4. Sprawdzenie kosztu wymiany.")
+            summary = page.get_by_test_id("exchange-confirmation")
+            expect(summary).to_be_visible()
+            expect(summary).to_contain_text("Kupujesz")
+            expect(
+                page.get_by_test_id("exchange-summary-get")
+            ).to_have_text("100.00 EUR")
+
+            cost = odczytaj_kwote(
+                page.get_by_test_id("confirm-total")
+            )
+
+            assert cost > 0, "Koszt zakupu musi być dodatni."
+            assert pln_before >= cost, (
+                f"Brak środków na zakup. "
+                f"Potrzeba {cost:.2f} zł, "
+                f"dostępne {pln_before:.2f} zł."
+            )
+
+            assert odczytaj_kwote(
+                page.get_by_test_id("exchange-summary-give")
+            ) == cost
+
+            expected_pln = pln_before - cost
+            expected_eur = eur_before + AMOUNT
+
+            # W kodzie aplikacji podsumowanie zawiera dwa salda.
+            summary_balances = page.get_by_test_id(
+                "exchange-summary-balances"
+            ).locator("strong")
+            expect(summary_balances).to_have_count(2)
+
+            assert odczytaj_kwote(
+                summary_balances.nth(0)
+            ) == expected_pln
+
+            assert odczytaj_kwote(
+                summary_balances.nth(1)
+            ) == expected_eur
+
+            # 5. Zatwierdzenie wymiany.
+            print(f"5. Zakup 100 EUR za {cost:.2f} zł.")
+            confirm = page.get_by_test_id("confirm-exchange")
+            expect(confirm).to_be_enabled()
+            confirm.click()
+
+            expect(page).to_have_url(
+                re.compile(
+                    rf"^{re.escape(BASE_URL)}/exchange/done/\d+$"
+                ),
+                timeout=15_000,
+            )
+
+            done = page.get_by_test_id("exchange-done")
+            expect(done).to_be_visible()
+            expect(done).to_contain_text("Waluty wymienione!")
+
+            exchange_id = page.url.rsplit("/", 1)[-1]
+
+            # 6. Ponowne pobranie sald z kantoru.
+            print("6. Kontrola sald po wymianie.")
+            page.get_by_test_id("nav-exchange").click()
+            expect(form).to_be_visible()
+
+            pln_after = odczytaj_kwote(
+                page.get_by_test_id("exchange-balance-PLN")
+            )
+            eur_after = odczytaj_kwote(
+                page.get_by_test_id("exchange-balance-EUR")
+            )
+
+            assert pln_after == expected_pln, (
+                f"Nieprawidłowe saldo PLN: {pln_after}. "
+                f"Oczekiwano {expected_pln}."
+            )
+            assert eur_after == expected_eur, (
+                f"Nieprawidłowe saldo EUR: {eur_after}. "
+                f"Oczekiwano {expected_eur}."
+            )
+
+            # 7. Weryfikacja konkretnej operacji w historii.
+            print("7. Sprawdzenie historii wymiany.")
+            expect(history_rows).to_have_count(history_count_before + 1)
+
+            row = page.get_by_test_id(
+                f"exchange-history-row-{exchange_id}"
+            )
+            expect(row).to_have_count(1)
+            expect(row).to_be_visible()
+
+            cells = row.locator("td")
+            expect(cells.nth(1)).to_have_text("Kupno")
+            expect(cells.nth(2)).to_have_text(CURRENCY)
+
+            assert odczytaj_kwote(cells.nth(3)) == AMOUNT
+            assert odczytaj_kwote(cells.nth(5)) == -cost
+
+            # Kontrola przeliczenia i zaokrąglenia do groszy.
+            recorded_rate = odczytaj_kwote(cells.nth(4))
+            calculated_cost = (AMOUNT * recorded_rate).quantize(
+                Decimal("0.01"),
+                rounding=ROUND_HALF_UP,
+            )
+            assert calculated_cost == cost, (
+                "Kwota rozliczenia nie odpowiada zapisanemu kursowi."
+            )
+
+            print(
+                "\nTEST ZALICZONY\n"
+                f"Kupiono: {AMOUNT:.2f} EUR\n"
+                f"Koszt: {cost:.2f} PLN\n"
+                f"Saldo PLN: {pln_before:.2f} → {pln_after:.2f}\n"
+                f"Saldo EUR: {eur_before:.2f} → {eur_after:.2f}\n"
+                f"Operacja: FX-{exchange_id}"
+            )
+
+        finally:
+            browser.close()
+
+
+if __name__ == "__main__":
